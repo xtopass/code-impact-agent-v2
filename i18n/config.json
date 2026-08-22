@@ -1,0 +1,6 @@
+{
+  "locale": "en",
+  "supportedLocales": ["en", "zh", "ja"],
+  "fallbackLocale": "en",
+  "messages": {}
+}

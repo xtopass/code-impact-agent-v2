@@ -1,0 +1,813 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Code Impact Agent</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        .fade-enter-active, .fade-leave-active { transition: opacity 0.3s; }
+        .fade-enter-from, .fade-leave-to { opacity: 0; }
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: #1f2937; }
+        ::-webkit-scrollbar-thumb { background: #4b5563; border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: #6b7280; }
+        .pulse-dot { animation: pulse 2s infinite; }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+        .impact-node:hover { transform: scale(1.02); transition: transform 0.2s; }
+        .chain-line::before {
+            content: ''; position: absolute; left: 15px; top: 32px; bottom: -12px;
+            width: 2px; background: linear-gradient(to bottom, #3b82f6, #8b5cf6);
+        }
+        .chain-line:last-child::before { display: none; }
+        .report-content h1,.report-content h2,.report-content h3 { margin-top: 1em; margin-bottom: 0.5em; font-weight: 600; }
+        .report-content ul { list-style: disc; padding-left: 1.5em; }
+        .report-content code { background: rgba(55,65,81,0.8); padding: 2px 6px; border-radius: 4px; font-size: 0.875em; }
+        .report-content p { margin-bottom: 0.75em; }
+        .metric-card { transition: all 0.3s ease; }
+        .metric-card:hover { transform: translateY(-2px); box-shadow: 0 10px 30px rgba(0,0,0,0.3); }
+        .tab-active { background: linear-gradient(135deg, #3b82f6, #8b5cf6); color: white; }
+        .alert-critical { border-left: 3px solid #ef4444; }
+        .alert-warning { border-left: 3px solid #f59e0b; }
+        .alert-info { border-left: 3px solid #3b82f6; }
+    </style>
+</head>
+<body class="bg-gray-900 text-gray-100">
+    <div id="app">
+        <!-- 顶部导航 -->
+        <nav class="bg-gray-800 border-b border-gray-700 px-6 py-3 sticky top-0 z-40">
+            <div class="flex items-center justify-between">
+                <div class="flex items-center space-x-4">
+                    <div class="flex items-center space-x-3">
+                        <div class="w-9 h-9 bg-gradient-to-br from-blue-500 to-purple-600 rounded-lg flex items-center justify-center">
+                            <i class="fas fa-project-diagram text-white text-sm"></i>
+                        </div>
+                        <div>
+                            <h1 class="text-lg font-bold text-white leading-tight">{{ t('common.app_name') }}</h1>
+                            <p class="text-xs text-gray-500">v2.0</p>
+                        </div>
+                    </div>
+                    <!-- 告警badge -->
+                    <div v-if="alertCount > 0" class="relative">
+                        <i class="fas fa-bell text-yellow-400 text-lg cursor-pointer hover:text-yellow-300" @click="showAlerts = !showAlerts"></i>
+                        <span class="absolute -top-1 -right-1 w-4 h-4 bg-red-500 rounded-full text-xs flex items-center justify-center">{{ alertCount }}</span>
+                    </div>
+                </div>
+
+                <div class="flex items-center space-x-3">
+                    <!-- 语言切换 -->
+                    <select v-model="currentLocale" @change="setLocale"
+                        class="bg-gray-700 border border-gray-600 rounded-lg px-2 py-1.5 text-sm text-white focus:outline-none focus:border-blue-500">
+                        <option value="zh">中文</option>
+                        <option value="en">English</option>
+                        <option value="ja">日本語</option>
+                    </select>
+                    <!-- 设置按钮 -->
+                    <a href="/setup.html" class="p-2 hover:bg-gray-700 rounded-lg transition-colors" title="{{ t('navigation.settings') }}">
+                        <i class="fas fa-cog text-gray-400 hover:text-white"></i>
+                    </a>
+                    <a href="/repositories.html" class="p-2 hover:bg-gray-700 rounded-lg transition-colors" title="{{ t('navigation.repositories') }}">
+                        <i class="fas fa-code-branch text-gray-400 hover:text-white"></i>
+                    </a>
+                </div>
+            </div>
+        </nav>
+
+        <!-- 标签导航 -->
+        <div class="bg-gray-800/50 border-b border-gray-700 px-6">
+            <div class="flex space-x-1 overflow-x-auto py-2">
+                <button v-for="tab in tabs" :key="tab.id" @click="currentTab = tab.id"
+                    :class="['flex items-center space-x-2 px-4 py-2 rounded-lg text-sm font-medium transition-all whitespace-nowrap',
+                        currentTab === tab.id ? 'tab-active shadow-lg' : 'text-gray-400 hover:text-white hover:bg-gray-700/50']">
+                    <i :class="tab.icon"></i>
+                    <span>{{ t(tab.label) }}</span>
+                    <span v-if="tab.badge && tab.badge > 0" class="ml-1 px-1.5 py-0.5 bg-red-500 text-white text-xs rounded-full">{{ tab.badge }}</span>
+                </button>
+            </div>
+        </div>
+
+        <!-- 告警抽屉 -->
+        <div v-if="showAlerts" class="fixed inset-0 z-50 flex justify-end">
+            <div class="absolute inset-0 bg-black/50" @click="showAlerts = false"></div>
+            <div class="relative w-full max-w-md bg-gray-800 border-l border-gray-700 overflow-y-auto">
+                <div class="p-6">
+                    <div class="flex items-center justify-between mb-4">
+                        <h2 class="text-lg font-semibold"><i class="fas fa-bell mr-2 text-yellow-400"></i>{{ t('supervision.alerts') }}</h2>
+                        <button @click="showAlerts = false" class="text-gray-400 hover:text-white"><i class="fas fa-times"></i></button>
+                    </div>
+                    <div v-for="(alert, i) in alerts" :key="i" class="mb-3 p-3 rounded-lg bg-gray-700/50 alert-" :class="'alert-' + alert.level">
+                        <div class="flex items-start space-x-2">
+                            <i :class="alertIcon(alert.level)" class="mt-0.5"></i>
+                            <div class="flex-1">
+                                <div class="text-sm font-medium">{{ alert.type === 'accuracy_drop' ? t('supervision.accuracy_drop') : alert.type === 'slow_analysis' ? t('supervision.slow_analysis') : t('supervision.insufficient_data') }}</div>
+                                <div class="text-xs text-gray-400 mt-1">{{ alert.message }}</div>
+                                <div class="text-xs text-gray-500 mt-1">{{ alert.timestamp?.slice(0,16) }}</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div v-if="!alerts.length" class="text-center text-gray-500 py-8">
+                        <i class="fas fa-check-circle text-3xl mb-2"></i>
+                        <div>{{ t('supervision.no_alerts') }}</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 主内容区 -->
+        <main class="p-6">
+            <!-- ========== 分析标签 ========== -->
+            <div v-if="currentTab === 'analyze'" class="space-y-6">
+                <div class="bg-gray-800 rounded-xl p-6 border border-gray-700">
+                    <h2 class="text-lg font-semibold mb-4"><i class="fas fa-search mr-2 text-blue-400"></i>{{ t('analysis.title') }}</h2>
+                    <!-- 分析模式切换 -->
+                    <div class="flex space-x-2 mb-4">
+                        <button @click="analysisMode = 'change'" :class="['px-4 py-2 rounded-lg text-sm transition-colors', analysisMode==='change'?'bg-blue-600':'bg-gray-700']">
+                            <i class="fas fa-code-branch mr-1"></i>{{ t('analysis.mode_change') }}
+                        </button>
+                        <button @click="analysisMode = 'dbfield'" :class="['px-4 py-2 rounded-lg text-sm transition-colors', analysisMode==='dbfield'?'bg-blue-600':'bg-gray-700']">
+                            <i class="fas fa-database mr-1"></i>{{ t('analysis.mode_db_field') }}
+                        </button>
+                    </div>
+                    <!-- 变更描述 -->
+                    <div class="mb-4">
+                        <label class="block text-sm text-gray-400 mb-2">{{ t('analysis.change_description') }} <span class="text-red-400">*</span></label>
+                        <textarea v-model="changeDescription" rows="3" class="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 resize-none" :placeholder="t('analysis.change_description_placeholder')"></textarea>
+                    </div>
+                    <!-- 模式特定字段 -->
+                    <div v-if="analysisMode==='change'" class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                        <div><label class="block text-sm text-gray-400 mb-2">{{ t('analysis.target_file') }}</label>
+                            <input v-model="changeTargetFile" type="text" class="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white placeholder-gray-500 focus:outline-none focus:border-blue-500" :placeholder="t('analysis.target_file_placeholder')"></div>
+                        <div><label class="block text-sm text-gray-400 mb-2">{{ t('analysis.code_context') }}</label>
+                            <input v-model="codeContext" type="text" class="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white placeholder-gray-500 focus:outline-none focus:border-blue-500" :placeholder="t('analysis.code_context_placeholder')"></div>
+                    </div>
+                    <div v-if="analysisMode==='dbfield'" class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+                        <div><label class="block text-sm text-gray-400 mb-2">{{ t('analysis.table_name') }}</label>
+                            <input v-model="tableName" type="text" class="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white placeholder-gray-500 focus:outline-none focus:border-blue-500" :placeholder="t('analysis.table_name_placeholder')"></div>
+                        <div><label class="block text-sm text-gray-400 mb-2">{{ t('analysis.field_name') }}</label>
+                            <input v-model="fieldName" type="text" class="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white placeholder-gray-500 focus:outline-none focus:border-blue-500" :placeholder="t('analysis.field_name_placeholder')"></div>
+                        <div><label class="block text-sm text-gray-400 mb-2">{{ t('analysis.field_change') }}</label>
+                            <input v-model="fieldChange" type="text" class="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white placeholder-gray-500 focus:outline-none focus:border-blue-500" :placeholder="t('analysis.field_change_placeholder')"></div>
+                    </div>
+                    <div v-if="analysisMode==='dbfield'" class="mb-4">
+                        <label class="block text-sm text-gray-400 mb-2">{{ t('analysis.tech_stack') }}</label>
+                        <input v-model="techStack" type="text" class="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white placeholder-gray-500 focus:outline-none focus:border-blue-500" :placeholder="t('analysis.tech_stack_placeholder')">
+                    </div>
+                    <!-- 通用选项 -->
+                    <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
+                        <div><label class="block text-sm text-gray-400 mb-2">{{ t('analysis.analysis_depth') }}</label>
+                            <select v-model="analysisDepth" class="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-blue-500">
+                                <option value="shallow">{{ t('analysis.depth_shallow') }}</option>
+                                <option value="medium">{{ t('analysis.depth_medium') }}</option>
+                                <option value="deep">{{ t('analysis.depth_deep') }}</option>
+                            </select></div>
+                        <div><label class="block text-sm text-gray-400 mb-2">{{ t('analysis.project_name') }}</label>
+                            <input v-model="projectName" type="text" class="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white placeholder-gray-500 focus:outline-none focus:border-blue-500" :placeholder="t('analysis.project_name_placeholder')"></div>
+                        <div><label class="block text-sm text-gray-400 mb-2">{{ t('analysis.audience') }}</label>
+                            <select v-model="audience" class="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-blue-500">
+                                <option value="developers">{{ t('analysis.audience_dev') }}</option>
+                                <option value="managers">{{ t('analysis.audience_mgr') }}</option>
+                                <option value="stakeholders">{{ t('analysis.audience_stake') }}</option>
+                            </select></div>
+                        <div class="flex items-end">
+                            <button @click="startAnalysis" :disabled="isAnalyzing||!canAnalyze" class="w-full px-6 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 rounded-lg font-medium transition-colors">
+                                <i class="fas fa-play mr-2"></i>{{ isAnalyzing ? t('analysis.analyzing') : t('analysis.start') }}
+                            </button>
+                        </div>
+                    </div>
+                    <div class="flex space-x-3">
+                        <button @click="resetAnalysis" class="px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg transition-colors"><i class="fas fa-redo mr-2"></i>{{ t('common.reset') }}</button>
+                    </div>
+                </div>
+                <!-- 进度 -->
+                <div v-if="isAnalyzing" class="bg-gray-800 rounded-xl p-6 border border-gray-700">
+                    <h3 class="text-lg font-semibold mb-4"><i class="fas fa-tasks mr-2 text-yellow-400"></i>{{ t('analysis.progress') }}</h3>
+                    <div class="space-y-3">
+                        <div v-for="step in analysisSteps" :key="step.key" class="flex items-center justify-between p-3 rounded-lg"
+                            :class="step.status==='completed'?'bg-green-900/30':step.status==='running'?'bg-blue-900/30':'bg-gray-700/30'">
+                            <div class="flex items-center space-x-3"><i :class="stepIcon(step)" :class="stepColor(step)"></i><span>{{ step.label }}</span></div>
+                            <span class="text-sm" :class="stepTextColor(step)">{{ step.statusLabel }}</span>
+                        </div>
+                    </div>
+                </div>
+                <!-- 结果 -->
+                <div v-if="analysisResult&&!isAnalyzing" class="space-y-6">
+                    <div class="bg-gray-800 rounded-xl p-6 border border-gray-700">
+                        <div class="flex items-center justify-between mb-4">
+                            <h2 class="text-lg font-semibold"><i class="fas fa-clipboard-check mr-2 text-green-400"></i>{{ t('analysis.result') }}</h2>
+                            <div class="flex items-center space-x-2">
+                                <span class="px-3 py-1 rounded-full text-sm font-medium" :class="getRiskBadgeClass(analysisResult.impact_data?.risk_level||'medium')">{{ t('risk.'+(analysisResult.impact_data?.risk_level||'medium')) }}</span>
+                                <span class="text-gray-400 text-sm">{{ analysisResult.execution_time_ms }}ms</span>
+                            </div>
+                        </div>
+                        <div class="grid grid-cols-4 gap-4 mb-6">
+                            <div class="bg-gray-700/50 rounded-lg p-4 text-center"><div class="text-2xl font-bold text-blue-400">{{ analysisResult.impact_data?.direct_impacts?.length||0 }}</div><div class="text-xs text-gray-400">{{ t('analysis.direct_impacts') }}</div></div>
+                            <div class="bg-gray-700/50 rounded-lg p-4 text-center"><div class="text-2xl font-bold text-purple-400">{{ analysisResult.impact_data?.indirect_impacts?.length||0 }}</div><div class="text-xs text-gray-400">{{ t('analysis.indirect_impacts') }}</div></div>
+                            <div class="bg-gray-700/50 rounded-lg p-4 text-center"><div class="text-2xl font-bold text-orange-400">{{ analysisResult.impact_data?.cascade_risks?.length||0 }}</div><div class="text-xs text-gray-400">{{ t('analysis.cascade_risks') }}</div></div>
+                            <div class="bg-gray-700/50 rounded-lg p-4 text-center"><div class="text-2xl font-bold text-green-400">{{ analysisResult.impact_data?.testing_suggestions?.length||0 }}</div><div class="text-xs text-gray-400">{{ t('analysis.test_suggestions') }}</div></div>
+                        </div>
+                        <div v-if="analysisResult.impact_data?.change_summary" class="bg-blue-900/20 border border-blue-700/50 rounded-lg p-4 mb-4 text-sm text-blue-300"><i class="fas fa-info-circle mr-1"></i>{{ analysisResult.impact_data.change_summary }}</div>
+                    </div>
+                    <!-- 影响链 -->
+                    <div class="bg-gray-800 rounded-xl p-6 border border-gray-700">
+                        <h3 class="text-lg font-semibold mb-4"><i class="fas fa-project-diagram mr-2 text-blue-400"></i>{{ t('analysis.impact_chain') }}</h3>
+                        <div v-if="analysisResult.impact_data?.direct_impacts?.length" class="mb-6">
+                            <h4 class="text-sm font-medium text-blue-300 mb-3">{{ t('analysis.direct_impacts') }}</h4>
+                            <div class="space-y-3">
+                                <div v-for="(imp,idx) in analysisResult.impact_data.direct_impacts" :key="idx" class="impact-node flex items-start space-x-3 p-3 bg-gray-700/50 rounded-lg border border-gray-600">
+                                    <div class="w-8 h-8 rounded-full bg-blue-900/50 flex items-center justify-center flex-shrink-0"><span class="text-xs font-bold text-blue-400">{{ idx+1 }}</span></div>
+                                    <div class="flex-1 min-w-0"><div class="flex items-center space-x-2 mb-1"><span class="px-2 py-0.5 rounded text-xs bg-gray-600 text-gray-300">{{ imp.type }}</span><span class="px-2 py-0.5 rounded text-xs" :class="getSeverityClass(imp.severity)">{{ imp.severity }}</span></div><div class="font-medium text-sm">{{ imp.target }}</div><div class="text-xs text-gray-400 mt-1">{{ imp.description }}</div></div>
+                                </div>
+                            </div>
+                        </div>
+                        <div v-if="analysisResult.impact_data?.indirect_impacts?.length" class="mb-6">
+                            <h4 class="text-sm font-medium text-purple-300 mb-3">{{ t('analysis.indirect_impacts') }}</h4>
+                            <div class="space-y-3">
+                                <div v-for="(imp,idx) in analysisResult.impact_data.indirect_impacts" :key="idx" class="impact-node flex items-start space-x-3 p-3 bg-gray-700/30 rounded-lg border border-gray-600 border-dashed">
+                                    <div class="w-8 h-8 rounded-full bg-purple-900/50 flex items-center justify-center flex-shrink-0"><i class="fas fa-link text-xs text-purple-400"></i></div>
+                                    <div class="flex-1 min-w-0"><div class="flex items-center space-x-2 mb-1"><span class="px-2 py-0.5 rounded text-xs bg-gray-600 text-gray-300">{{ imp.type }}</span><span class="px-2 py-0.5 rounded text-xs" :class="getSeverityClass(imp.severity)">{{ imp.severity }}</span></div><div class="font-medium text-sm">{{ imp.target }}</div><div class="text-xs text-gray-400 mt-1">{{ imp.description }}</div><div v-if="imp.root_cause" class="text-xs text-gray-500 mt-1"><i class="fas fa-arrow-left mr-1"></i>{{ t('analysis.root_cause') }}: {{ imp.root_cause }}</div></div>
+                                </div>
+                            </div>
+                        </div>
+                        <div v-if="analysisResult.impact_data?.cascade_risks?.length" class="mb-4">
+                            <h4 class="text-sm font-medium text-red-300 mb-3">{{ t('analysis.cascade_risks') }}</h4>
+                            <div class="space-y-2">
+                                <div v-for="(risk,idx) in analysisResult.impact_data.cascade_risks" :key="idx" class="p-3 bg-red-900/20 border border-red-700/50 rounded-lg text-sm">{{ risk.description }}<div v-if="risk.affected_systems?.length" class="text-xs text-gray-400 mt-1">{{ t('analysis.affected_systems') }}: {{ risk.affected_systems.join(', ') }}</div></div>
+                            </div>
+                        </div>
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div v-if="analysisResult.impact_data?.testing_suggestions?.length"><h4 class="text-sm font-medium text-green-300 mb-2">{{ t('analysis.test_suggestions') }}</h4><ul class="space-y-1 text-sm text-gray-300"><li v-for="(s,i) in analysisResult.impact_data.testing_suggestions" :key="i"><i class="fas fa-check text-green-500 mr-2 text-xs"></i>{{ s }}</li></ul></div>
+                            <div v-if="analysisResult.impact_data?.rollback_plan"><h4 class="text-sm font-medium text-yellow-300 mb-2">{{ t('analysis.rollback_plan') }}</h4><p class="text-sm text-gray-300">{{ analysisResult.impact_data.rollback_plan }}</p></div>
+                        </div>
+                    </div>
+                    <!-- 报告 -->
+                    <div class="bg-gray-800 rounded-xl p-6 border border-gray-700">
+                        <div class="flex items-center justify-between mb-4">
+                            <h3 class="text-lg font-semibold"><i class="fas fa-file-alt mr-2 text-purple-400"></i>{{ t('analysis.report') }}</h3>
+                            <button @click="exportReport" class="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 rounded-lg text-sm"><i class="fas fa-download mr-1"></i>{{ t('common.export') }}</button>
+                        </div>
+                        <div class="report-content bg-gray-700/30 rounded-lg p-4 text-sm text-gray-300" v-html="renderedReport"></div>
+                    </div>
+                    <div class="flex space-x-3">
+                        <button @click="exportReport" class="px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg"><i class="fas fa-download mr-2"></i>{{ t('common.export') }}</button>
+                        <button @click="openFeedbackModal" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg"><i class="fas fa-comment mr-2"></i>{{ t('feedback.submit') }}</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ========== 历史标签 ========== -->
+            <div v-if="currentTab === 'history'" class="space-y-6">
+                <div class="bg-gray-800 rounded-xl p-6 border border-gray-700">
+                    <div class="flex items-center justify-between mb-4">
+                        <h2 class="text-lg font-semibold"><i class="fas fa-history mr-2 text-blue-400"></i>{{ t('history.title') }}</h2>
+                        <div class="flex items-center space-x-2">
+                            <input v-model="historyFilter.keyword" type="text" :placeholder="t('history.search')" class="bg-gray-700 border border-gray-600 rounded-lg px-3 py-1.5 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 w-48">
+                            <select v-model="historyFilter.risk_level" class="bg-gray-700 border border-gray-600 rounded-lg px-3 py-1.5 text-sm text-white focus:outline-none focus:border-blue-500">
+                                <option value="">{{ t('history.all_risks') }}</option>
+                                <option value="low">{{ t('risk.low') }}</option>
+                                <option value="medium">{{ t('risk.medium') }}</option>
+                                <option value="high">{{ t('risk.high') }}</option>
+                                <option value="critical">{{ t('risk.critical') }}</option>
+                            </select>
+                            <button @click="loadHistory" class="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 rounded-lg text-sm"><i class="fas fa-sync mr-1"></i>{{ t('common.refresh') }}</button>
+                            <button @click="exportHistory" class="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 rounded-lg text-sm"><i class="fas fa-download mr-1"></i>{{ t('common.export') }}</button>
+                        </div>
+                    </div>
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-sm">
+                            <thead><tr class="text-left text-gray-400 border-b border-gray-700">
+                                <th class="pb-2 pl-2">{{ t('history.case_id') }}</th><th class="pb-2">{{ t('history.target') }}</th><th class="pb-2">{{ t('history.risk_level') }}</th><th class="pb-2">{{ t('history.findings') }}</th><th class="pb-2">{{ t('history.time') }}</th><th class="pb-2">{{ t('history.duration') }}</th><th class="pb-2">{{ t('history.feedback') }}</th><th class="pb-2">{{ t('common.actions') }}</th>
+                            </tr></thead>
+                            <tbody>
+                                <tr v-for="h in historyList" :key="h.case_id" class="border-b border-gray-800 hover:bg-gray-700/30">
+                                    <td class="py-3 pl-2 font-mono text-xs text-gray-500">{{ h.case_id?.slice(0,8) }}</td>
+                                    <td class="py-3 font-medium">{{ h.target_file }}</td>
+                                    <td class="py-3"><span class="px-2 py-0.5 rounded text-xs" :class="getRiskBadgeClass(h.risk_level)">{{ t('risk.'+h.risk_level) }}</span></td>
+                                    <td class="py-3">{{ h.findings_count }}</td>
+                                    <td class="py-3 text-gray-400 text-xs">{{ h.timestamp?.slice(0,16) }}</td>
+                                    <td class="py-3 text-gray-400">{{ h.execution_time_ms }}ms</td>
+                                    <td class="py-3">
+                                        <span v-if="h.is_correct===true" class="text-green-400"><i class="fas fa-check"></i></span>
+                                        <span v-else-if="h.is_correct===false" class="text-red-400"><i class="fas fa-times"></i></span>
+                                        <span v-else class="text-gray-500">-</span>
+                                    </td>
+                                    <td class="py-3">
+                                        <button @click="viewHistoryDetail(h)" class="p-1 hover:bg-gray-600 rounded text-blue-400 mr-1" title="{{ t('common.view') }}"><i class="fas fa-eye"></i></button>
+                                        <button @click="deleteHistory(h.case_id)" class="p-1 hover:bg-red-900/30 rounded text-red-400" title="{{ t('common.delete') }}"><i class="fas fa-trash"></i></button>
+                                    </td>
+                                </tr>
+                                <tr v-if="!historyList.length"><td colspan="8" class="py-8 text-center text-gray-500"><i class="fas fa-inbox text-2xl mb-2"></i><br>{{ t('history.no_history') }}</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    <div class="flex items-center justify-between mt-4 text-sm text-gray-400">
+                        <span>{{ t('history.total') }}: {{ historyTotal }}</span>
+                        <div class="flex space-x-2">
+                            <button @click="historyOffset=Math.max(0,historyOffset-50)" :disabled="historyOffset<=0" class="px-3 py-1 bg-gray-700 rounded hover:bg-gray-600 disabled:opacity-50">{{ t('common.previous') }}</button>
+                            <button @click="historyOffset+=50" class="px-3 py-1 bg-gray-700 rounded hover:bg-gray-600">{{ t('common.next') }}</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ========== 记忆标签 ========== -->
+            <div v-if="currentTab === 'memory'" class="space-y-6">
+                <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                    <!-- 统计 -->
+                    <div class="bg-gray-800 rounded-xl p-6 border border-gray-700">
+                        <h2 class="text-lg font-semibold mb-4"><i class="fas fa-brain mr-2 text-purple-400"></i>{{ t('memory.title') }}</h2>
+                        <div class="space-y-3">
+                            <div class="flex justify-between items-center p-3 bg-gray-700/50 rounded-lg"><span class="text-gray-400 text-sm">{{ t('memory.short_term') }}</span><span class="font-bold text-blue-400">{{ memoryStats.short_term?.count || 0 }} / {{ memoryStats.short_term?.capacity || 10 }}</span></div>
+                            <div class="flex justify-between items-center p-3 bg-gray-700/50 rounded-lg"><span class="text-gray-400 text-sm">{{ t('memory.long_term') }}</span><span class="font-bold text-green-400">{{ memoryStats.long_term?.total || 0 }}</span></div>
+                            <div class="flex justify-between items-center p-3 bg-gray-700/50 rounded-lg"><span class="text-gray-400 text-sm">{{ t('memory.episodic') }}</span><span class="font-bold text-yellow-400">{{ memoryStats.episodic?.count || 0 }}</span></div>
+                            <div class="flex justify-between items-center p-3 bg-gray-700/50 rounded-lg"><span class="text-gray-400 text-sm">{{ t('memory.semantic') }}</span><span class="font-bold text-purple-400">{{ memoryStats.semantic?.count || 0 }}</span></div>
+                        </div>
+                        <button @click="consolidateMemory" class="w-full mt-4 px-4 py-2 bg-purple-600 hover:bg-purple-700 rounded-lg text-sm transition-colors"><i class="fas fa-magic mr-2"></i>{{ t('memory.consolidate') }}</button>
+                    </div>
+                    <!-- 添加记忆 -->
+                    <div class="lg:col-span-2 bg-gray-800 rounded-xl p-6 border border-gray-700">
+                        <h3 class="text-md font-semibold mb-4"><i class="fas fa-plus mr-2 text-blue-400"></i>{{ t('memory.add') }}</h3>
+                        <div class="space-y-3">
+                            <div><label class="block text-sm text-gray-400 mb-1">{{ t('memory.content') }}</label>
+                                <textarea v-model="newMemory.content" rows="2" class="w-full bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500 resize-none" :placeholder="t('memory.content_placeholder')"></textarea></div>
+                            <div class="grid grid-cols-3 gap-3">
+                                <div><label class="block text-sm text-gray-400 mb-1">{{ t('memory.type') }}</label>
+                                    <select v-model="newMemory.memory_type" class="w-full bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500">
+                                        <option value="short_term">{{ t('memory.short_term') }}</option>
+                                        <option value="long_term">{{ t('memory.long_term') }}</option>
+                                        <option value="episodic">{{ t('memory.episodic') }}</option>
+                                        <option value="semantic">{{ t('memory.semantic') }}</option>
+                                    </select></div>
+                                <div><label class="block text-sm text-gray-400 mb-1">{{ t('memory.importance') }}</label>
+                                    <input v-model.number="newMemory.importance" type="range" min="0" max="1" step="0.1" class="w-full mt-2 accent-blue-500"></div>
+                                <div class="flex items-end"><span class="text-sm text-gray-400">{{ newMemory.importance }}</span></div>
+                            </div>
+                            <div><label class="block text-sm text-gray-400 mb-1">{{ t('memory.tags') }} <span class="text-gray-500">({{ t('common.optional') }})</span></label>
+                                <input v-model="newMemoryTags" type="text" class="w-full bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500" :placeholder="t('memory.tags_placeholder')">
+                            </div>
+                            <button @click="addMemory" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg text-sm transition-colors"><i class="fas fa-save mr-2"></i>{{ t('memory.save') }}</button>
+                        </div>
+                    </div>
+                </div>
+                <!-- 记忆列表 -->
+                <div class="bg-gray-800 rounded-xl p-6 border border-gray-700">
+                    <div class="flex items-center justify-between mb-4">
+                        <h3 class="text-lg font-semibold"><i class="fas fa-list mr-2 text-gray-400"></i>{{ t('memory.list') }}</h3>
+                        <div class="flex items-center space-x-2">
+                            <input v-model="memorySearch" type="text" :placeholder="t('memory.search')" class="bg-gray-700 border border-gray-600 rounded-lg px-3 py-1.5 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 w-48">
+                            <select v-model="memoryFilterType" class="bg-gray-700 border border-gray-600 rounded-lg px-3 py-1.5 text-sm text-white focus:outline-none focus:border-blue-500">
+                                <option value="">{{ t('memory.all_types') }}</option>
+                                <option value="short_term">{{ t('memory.short_term') }}</option>
+                                <option value="long_term">{{ t('memory.long_term') }}</option>
+                                <option value="episodic">{{ t('memory.episodic') }}</option>
+                                <option value="semantic">{{ t('memory.semantic') }}</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="space-y-2 max-h-96 overflow-y-auto">
+                        <div v-for="mem in filteredMemories" :key="mem.id" class="flex items-start space-x-3 p-3 bg-gray-700/30 rounded-lg hover:bg-gray-700/50 transition-colors">
+                            <div class="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0" :class="memTypeColor(mem.memory_type)"><i :class="memTypeIcon(mem.memory_type)"></i></div>
+                            <div class="flex-1 min-w-0">
+                                <div class="flex items-center space-x-2 mb-1">
+                                    <span class="px-2 py-0.5 rounded text-xs" :class="memTypeBgClass(mem.memory_type)">{{ t('memory.'+mem.memory_type) }}</span>
+                                    <div class="flex items-center space-x-1">
+                                        <div class="w-16 h-1.5 bg-gray-600 rounded-full overflow-hidden"><div class="h-full bg-blue-500 rounded-full" :style="{width: (mem.importance*100)+'%'}"></div></div>
+                                        <span class="text-xs text-gray-500">{{ mem.importance }}</span>
+                                    </div>
+                                </div>
+                                <div class="text-sm text-gray-200 truncate">{{ mem.content }}</div>
+                                <div v-if="mem.tags?.length" class="flex space-x-1 mt-1"><span v-for="tag in mem.tags" :key="tag" class="px-1.5 py-0.5 bg-gray-600 rounded text-xs text-gray-400">#{{ tag }}</span></div>
+                                <div class="text-xs text-gray-500 mt-1">{{ mem.timestamp?.slice(0,16) }}</div>
+                            </div>
+                            <button @click="deleteMemory(mem.id)" class="p-1.5 hover:bg-red-900/30 rounded text-gray-500 hover:text-red-400 transition-colors"><i class="fas fa-trash text-xs"></i></button>
+                        </div>
+                        <div v-if="!filteredMemories.length" class="text-center text-gray-500 py-8"><i class="fas fa-database text-2xl mb-2"></i><br>{{ t('memory.no_memories') }}</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ========== 上下文标签 ========== -->
+            <div v-if="currentTab === 'context'" class="space-y-6">
+                <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                    <!-- 会话列表 -->
+                    <div class="lg:col-span-2 bg-gray-800 rounded-xl p-6 border border-gray-700">
+                        <div class="flex items-center justify-between mb-4">
+                            <h2 class="text-lg font-semibold"><i class="fas fa-comments mr-2 text-blue-400"></i>{{ t('context.sessions') }}</h2>
+                            <button @click="createSession" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg text-sm"><i class="fas fa-plus mr-2"></i>{{ t('context.create') }}</button>
+                        </div>
+                        <div class="space-y-2 max-h-80 overflow-y-auto">
+                            <div v-for="s in sessions" :key="s.session_id" @click="selectSession(s)" class="flex items-center justify-between p-3 bg-gray-700/30 rounded-lg hover:bg-gray-700/50 cursor-pointer transition-colors" :class="selectedSession===s.session_id?'border-blue-500 border':'border-transparent'">
+                                <div class="flex items-center space-x-3 min-w-0">
+                                    <div class="w-8 h-8 rounded-full bg-blue-900/50 flex items-center justify-center flex-shrink-0"><i class="fas fa-message text-xs text-blue-400"></i></div>
+                                    <div class="min-w-0"><div class="font-medium text-sm truncate">{{ s.session_id?.slice(0,8) }}</div><div class="text-xs text-gray-500">{{ s.message_count }} {{ t('context.messages') }} · {{ s.updated_at?.slice(0,16) }}</div></div>
+                                </div>
+                                <button @click.stop="deleteSession(s.session_id)" class="p-1.5 hover:bg-red-900/30 rounded text-gray-500 hover:text-red-400"><i class="fas fa-trash text-xs"></i></button>
+                            </div>
+                            <div v-if="!sessions.length" class="text-center text-gray-500 py-8"><i class="fas fa-inbox text-2xl mb-2"></i><br>{{ t('context.no_sessions') }}</div>
+                        </div>
+                    </div>
+                    <!-- 会话详情 -->
+                    <div class="bg-gray-800 rounded-xl p-6 border border-gray-700">
+                        <h3 class="text-md font-semibold mb-4"><i class="fas fa-stream mr-2 text-purple-400"></i>{{ t('context.detail') }}</h3>
+                        <div v-if="selectedSession" class="space-y-3 max-h-96 overflow-y-auto">
+                            <div v-for="msg in sessionMessages" :key="msg.message_id" class="p-3 rounded-lg" :class="msg.role==='user'?'bg-blue-900/20 ml-4':'bg-gray-700/30 mr-4'">
+                                <div class="flex items-center space-x-2 mb-1"><span class="text-xs font-medium" :class="msg.role==='user'?'text-blue-400':'text-purple-400'">{{ msg.role }}</span><span class="text-xs text-gray-500">{{ msg.timestamp?.slice(0,16) }}</span></div>
+                                <div class="text-sm text-gray-200 whitespace-pre-wrap">{{ msg.content }}</div>
+                            </div>
+                            <div v-if="!sessionMessages.length" class="text-center text-gray-500 text-sm py-4">{{ t('context.no_messages') }}</div>
+                        </div>
+                        <div v-else class="text-center text-gray-500 py-8"><i class="fas fa-hand-pointer text-2xl mb-2"></i><br>{{ t('context.select_session') }}</div>
+                        <!-- 发送消息 -->
+                        <div v-if="selectedSession" class="mt-4 space-y-2">
+                            <textarea v-model="newMessage" rows="2" class="w-full bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500 resize-none" :placeholder="t('context.message_placeholder')"></textarea>
+                            <div class="flex space-x-2">
+                                <button @click="sendMessage('user')" class="flex-1 px-3 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg text-sm transition-colors">{{ t('context.send') }}</button>
+                                <button @click="sendMessage('assistant')" class="flex-1 px-3 py-2 bg-purple-600 hover:bg-purple-700 rounded-lg text-sm transition-colors">{{ t('context.ai_reply') }}</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ========== Agent 标签 ========== -->
+            <div v-if="currentTab === 'agents'" class="space-y-6">
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    <div class="bg-gray-800 rounded-xl p-6 border border-gray-700">
+                        <div class="flex items-center justify-between mb-4"><h2 class="text-lg font-semibold"><i class="fas fa-robot mr-2 text-blue-400"></i>{{ t('agent.agent_pool') }}</h2><span class="text-sm text-gray-400">{{ agents.length }} {{ t('agent.count') }}</span></div>
+                        <div class="space-y-3">
+                            <div v-for="agent in agents" :key="agent.id" class="agent-card bg-gray-700/50 rounded-lg p-4 border border-gray-600">
+                                <div class="flex items-start justify-between"><div class="flex items-center space-x-3"><div class="w-10 h-10 rounded-full flex items-center justify-center" :class="getAgentStatusClass(agent.status)"><i :class="getAgentIcon(agent)"></i></div><div><div class="font-medium">{{ agent.name }}</div><div class="text-sm text-gray-400">{{ agent.role }}</div></div></div><div class="flex items-center space-x-2"><span class="px-2 py-1 rounded text-xs" :class="getStatusBadgeClass(agent.status)">{{ agent.status }}</span><button @click="toggleAgent(agent.id)" class="p-1 hover:bg-gray-600 rounded"><i :class="agent.enabled?'fas fa-toggle-on text-green-400':'fas fa-toggle-off text-gray-500'"></i></button></div></div>
+                                <div class="mt-3 flex flex-wrap gap-2"><span v-for="cap in agent.capabilities" :key="cap.name" class="px-2 py-1 bg-blue-900/30 text-blue-300 rounded text-xs">{{ cap.name }}</span></div>
+                                <div class="mt-3 flex space-x-4 text-xs text-gray-400"><span><i class="fas fa-tasks mr-1"></i>{{ agent.tasks_completed }} {{ t('agent.tasks_completed') }}</span><span><i class="fas fa-exclamation-circle mr-1"></i>{{ agent.errors_count }} {{ t('agent.errors') }}</span></div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="bg-gray-800 rounded-xl p-6 border border-gray-700">
+                        <h2 class="text-lg font-semibold mb-4"><i class="fas fa-chart-pie mr-2 text-purple-400"></i>{{ t('agent.routing_stats') }}</h2>
+                        <div class="grid grid-cols-2 gap-4">
+                            <div class="bg-gray-700/50 rounded-lg p-4 text-center"><div class="text-2xl font-bold text-green-400">{{ routingStats.idle }}</div><div class="text-sm text-gray-400">{{ t('agent.idle') }}</div></div>
+                            <div class="bg-gray-700/50 rounded-lg p-4 text-center"><div class="text-2xl font-bold text-yellow-400">{{ routingStats.busy }}</div><div class="text-sm text-gray-400">{{ t('agent.busy') }}</div></div>
+                        </div>
+                        <div class="mt-4 bg-gray-700/50 rounded-lg p-4"><div class="flex justify-between text-sm mb-2"><span class="text-gray-400">{{ t('agent.routing_capacity') }}</span><span class="font-medium">{{ (routingStats.routing_capacity*100).toFixed(0) }}%</span></div><div class="w-full bg-gray-600 rounded-full h-2"><div class="bg-blue-500 h-2 rounded-full transition-all" :style="{width:(routingStats.routing_capacity*100)+'%'}"></div></div></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ========== Skills 标签 ========== -->
+            <div v-if="currentTab === 'skills'" class="space-y-6">
+                <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                    <div class="lg:col-span-2 bg-gray-800 rounded-xl p-6 border border-gray-700">
+                        <div class="flex items-center justify-between mb-4"><h2 class="text-lg font-semibold"><i class="fas fa-puzzle-piece mr-2 text-yellow-400"></i>{{ t('skill.my_skills') }}</h2><button @click="showAddSkillModal=true" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg text-sm"><i class="fas fa-plus mr-2"></i>{{ t('skill.add_skill') }}</button></div>
+                        <div class="space-y-3">
+                            <div v-for="skill in skills" :key="skill.instance_id" class="bg-gray-700/50 rounded-lg p-4 border border-gray-600"><div class="flex items-start justify-between"><div><div class="font-medium">{{ skill.name }}</div><div class="text-sm text-gray-400">{{ skill.description }}</div><div class="mt-2 flex flex-wrap gap-2"><span v-for="tag in skill.tags" :key="tag" class="px-2 py-0.5 bg-gray-600 rounded text-xs">{{ tag }}</span></div></div><div class="flex items-center space-x-2"><span class="text-xs text-gray-500">v{{ skill.version }}</span><button @click="toggleSkill(skill.id)" class="p-1 hover:bg-gray-600 rounded"><i :class="skill.is_active?'fas fa-eye text-green-400':'fas fa-eye-slash text-gray-500'"></i></button></div></div></div>
+                        </div>
+                    </div>
+                    <div class="bg-gray-800 rounded-xl p-6 border border-gray-700"><h2 class="text-lg font-semibold mb-4"><i class="fas fa-store mr-2 text-purple-400"></i>{{ t('skill.skill_marketplace') }}</h2><div class="space-y-3"><div v-for="ms in marketplaceSkills" :key="ms.id" class="bg-gray-700/30 rounded-lg p-3 border border-gray-600"><div class="font-medium text-sm">{{ ms.name }}</div><div class="text-xs text-gray-400 mt-1">{{ ms.description }}</div><div class="mt-2 flex items-center justify-between"><span class="text-xs text-gray-500">{{ ms.author }}</span><button @click="installSkill(ms.id)" class="px-3 py-1 bg-blue-600 hover:bg-blue-700 rounded text-xs transition-colors">{{ t('skill.install_skill') }}</button></div></div></div></div>
+                </div>
+            </div>
+
+            <!-- ========== MCP 标签 ========== -->
+            <div v-if="currentTab === 'mcp'" class="space-y-6">
+                <div class="bg-gray-800 rounded-xl p-6 border border-gray-700">
+                    <div class="flex items-center justify-between mb-4"><h2 class="text-lg font-semibold"><i class="fas fa-plug mr-2 text-green-400"></i>{{ t('mcp.title') }}</h2><button @click="showAddMCPModal=true" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg text-sm"><i class="fas fa-plus mr-2"></i>{{ t('mcp.add_server') }}</button></div>
+                    <div class="space-y-3">
+                        <div v-for="srv in mcpServers" :key="srv.name" class="bg-gray-700/50 rounded-lg p-4 border border-gray-600"><div class="flex items-center justify-between"><div class="flex items-center space-x-3"><div class="w-10 h-10 bg-gray-600 rounded-lg flex items-center justify-center"><i class="fas fa-server text-gray-300"></i></div><div><div class="font-medium">{{ srv.name }}</div><div class="text-sm text-gray-400">{{ srv.transport }} · {{ srv.auth_type!=='none'?srv.auth_type+'{{ t('mcp.auth_with_token') }}':'无认证' }} · {{ srv.command || srv.url }}</div><div v-if="srv.description" class="text-xs text-gray-500 mt-0.5">{{ srv.description }}</div></div></div><div class="flex items-center space-x-3"><span class="px-2 py-1 rounded text-xs" :class="srv.enabled?'bg-green-900/30 text-green-400':'bg-gray-600 text-gray-400'">{{ srv.enabled?t('common.enabled'):t('common.disabled') }}</span><button @click="removeMCP(srv.name)" class="p-2 hover:bg-red-900/30 rounded text-red-400"><i class="fas fa-trash"></i></button></div></div></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ========== 学习标签 ========== -->
+            <div v-if="currentTab === 'learning'" class="space-y-6">
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    <div class="bg-gray-800 rounded-xl p-6 border border-gray-700"><h2 class="text-lg font-semibold mb-4"><i class="fas fa-brain mr-2 text-purple-400"></i>{{ t('learning.title') }}</h2><div class="grid grid-cols-2 gap-4"><div class="bg-gray-700/50 rounded-lg p-4 text-center"><div class="text-2xl font-bold text-blue-400">{{ learningStats.total_cases||0 }}</div><div class="text-sm text-gray-400">{{ t('learning.total_cases') }}</div></div><div class="bg-gray-700/50 rounded-lg p-4 text-center"><div class="text-2xl font-bold text-green-400">{{ learningStats.accuracy_rate?(learningStats.accuracy_rate*100).toFixed(0)+'%':'N/A' }}</div><div class="text-sm text-gray-400">{{ t('learning.accuracy_rate') }}</div></div><div class="bg-gray-700/50 rounded-lg p-4 text-center"><div class="text-2xl font-bold text-yellow-400">{{ learningStats.avg_execution_time_ms||0 }}ms</div><div class="text-sm text-gray-400">{{ t('learning.avg_execution_time') }}</div></div><div class="bg-gray-700/50 rounded-lg p-4 text-center"><div class="text-2xl font-bold text-purple-400">{{ learningStats.recent_cases_7days||0 }}</div><div class="text-sm text-gray-400">{{ t('learning.recent_cases_7days') }}</div></div></div></div>
+                    <div class="bg-gray-800 rounded-xl p-6 border border-gray-700"><h2 class="text-lg font-semibold mb-4"><i class="fas fa-lightbulb mr-2 text-yellow-400"></i>{{ t('learning.optimization_suggestions') }}</h2><div class="space-y-3"><div v-for="(rec,i) in recommendations" :key="i" class="bg-gray-700/30 rounded-lg p-3 border-l-4" :class="rec.priority==='high'?'border-red-500':rec.priority==='medium'?'border-yellow-500':'border-green-500'"><div class="flex items-center justify-between"><span class="font-medium text-sm">{{ rec.type }}</span><span class="px-2 py-0.5 rounded text-xs" :class="rec.priority==='high'?'bg-red-900/30 text-red-400':rec.priority==='medium'?'bg-yellow-900/30 text-yellow-400':'bg-green-900/30 text-green-400'">{{ rec.priority }}</span></div><div class="text-sm text-gray-400 mt-1">{{ rec.message }}</div></div><div v-if="!recommendations.length" class="text-center text-gray-500 py-4"><i class="fas fa-check-circle text-2xl mb-2"></i><div>{{ t('learning.no_recommendations') }}</div></div></div></div>
+                </div>
+                <div class="bg-gray-800 rounded-xl p-6 border border-gray-700"><h2 class="text-lg font-semibold mb-4"><i class="fas fa-cog mr-2 text-gray-400"></i>{{ t('learning.rule_adjustments') }}</h2><div class="overflow-x-auto"><table class="w-full text-sm"><thead><tr class="text-left text-gray-400 border-b border-gray-700"><th class="pb-2">{{ t('learning.rule_id') }}</th><th class="pb-2">{{ t('learning.adjustment_type') }}</th><th class="pb-2">{{ t('learning.reason') }}</th><th class="pb-2">{{ t('learning.confidence') }}</th><th class="pb-2">{{ t('learning.suggested_value') }}</th><th class="pb-2">{{ t('common.actions') }}</th></tr></thead><tbody><tr v-for="adj in ruleAdjustments" :key="adj.rule_id" class="border-b border-gray-800"><td class="py-3 font-mono text-xs">{{ adj.rule_id }}</td><td class="py-3"><span class="px-2 py-1 rounded text-xs" :class="adj.adjustment_type==='tighten'?'bg-red-900/30 text-red-400':adj.adjustment_type==='loosen'?'bg-yellow-900/30 text-yellow-400':'bg-blue-900/30 text-blue-400'">{{ adj.adjustment_type }}</span></td><td class="py-3 text-gray-400">{{ adj.reason }}</td><td class="py-3">{{ (adj.confidence*100).toFixed(0) }}%</td><td class="py-3 font-mono text-xs">{{ JSON.stringify(adj.suggested_value) }}</td><td class="py-3"><button @click="applyAdjustment(adj.rule_id,adj)" class="px-3 py-1 bg-blue-600 hover:bg-blue-700 rounded text-xs">{{ t('learning.apply_adjustment') }}</button></td></tr><tr v-if="!ruleAdjustments.length"><td colspan="6" class="py-8 text-center text-gray-500"><i class="fas fa-check-circle text-2xl mb-2"></i><div>{{ t('learning.no_recommendations') }}</div></td></tr></tbody></table></div></div>
+            </div>
+
+            <!-- ========== 自监督标签 ========== -->
+            <div v-if="currentTab === 'supervision'" class="space-y-6">
+                <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    <div class="metric-card bg-gray-800 rounded-xl p-5 border border-gray-700"><div class="text-3xl font-bold text-green-400">{{ supervisionMetrics?.overall?.accuracy_rate ? (supervisionMetrics.overall.accuracy_rate*100).toFixed(1)+'%' : '-' }}</div><div class="text-sm text-gray-400 mt-1">{{ t('supervision.accuracy') }}</div><div class="text-xs text-gray-500 mt-1">{{ t('supervision.accuracy_7d') }}: {{ supervisionMetrics?.overall?.accuracy_7d ? (supervisionMetrics.overall.accuracy_7d*100).toFixed(1)+'%' : '-' }}</div></div>
+                    <div class="metric-card bg-gray-800 rounded-xl p-5 border border-gray-700"><div class="text-3xl font-bold text-blue-400">{{ supervisionMetrics?.overall?.total_cases || 0 }}</div><div class="text-sm text-gray-400 mt-1">{{ t('supervision.total_cases') }}</div><div class="text-xs text-gray-500 mt-1">{{ t('supervision.feedback_count') }}: {{ supervisionMetrics?.overall?.feedback_count || 0 }}</div></div>
+                    <div class="metric-card bg-gray-800 rounded-xl p-5 border border-gray-700"><div class="text-3xl font-bold text-yellow-400">{{ supervisionMetrics?.overall?.avg_execution_time_ms || 0 }}<span class="text-sm">ms</span></div><div class="text-sm text-gray-400 mt-1">{{ t('supervision.avg_time') }}</div><div class="text-xs text-gray-500 mt-1">{{ t('supervision.quality_score') }}: {{ supervisionMetrics?.overall?.avg_quality_score ? supervisionMetrics.overall.avg_quality_score.toFixed(2) : '-' }}</div></div>
+                    <div class="metric-card bg-gray-800 rounded-xl p-5 border border-gray-700"><div class="text-3xl font-bold text-purple-400">{{ supervisionMetrics?.memory_health?.long_term?.total || 0 }}</div><div class="text-sm text-gray-400 mt-1">{{ t('supervision.memory_items') }}</div><div class="text-xs text-gray-500 mt-1">{{ t('supervision.agents_busy') }}: {{ supervisionMetrics?.agent_load?.busy || 0 }}</div></div>
+                </div>
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    <div class="bg-gray-800 rounded-xl p-6 border border-gray-700"><h3 class="text-md font-semibold mb-4"><i class="fas fa-chart-line mr-2 text-blue-400"></i>{{ t('supervision.accuracy_trend') }}</h3><canvas id="accuracyChart" height="200"></canvas></div>
+                    <div class="bg-gray-800 rounded-xl p-6 border border-gray-700"><h3 class="text-md font-semibold mb-4"><i class="fas fa-chart-bar mr-2 text-purple-400"></i>{{ t('supervision.daily_cases') }}</h3><canvas id="dailyChart" height="200"></canvas></div>
+                </div>
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    <div class="bg-gray-800 rounded-xl p-6 border border-gray-700"><h3 class="text-md font-semibold mb-4"><i class="fas fa-exclamation-triangle mr-2 text-yellow-400"></i>{{ t('supervision.drift_detection') }}</h3><div v-if="driftResult" class="space-y-3"><div class="flex items-center justify-between p-3 rounded-lg" :class="driftResult.drift_detected?'bg-red-900/20 border border-red-700':'bg-green-900/20 border border-green-700'"><div><div class="font-medium" :class="driftResult.drift_detected?'text-red-400':'text-green-400'">{{ driftResult.drift_detected?t('supervision.drift_detected'):t('supervision.no_drift') }}</div><div class="text-sm text-gray-400 mt-1">{{ driftResult.reason || '' }}</div></div><span class="px-3 py-1 rounded text-sm" :class="driftResult.drift_detected?'bg-red-900/30 text-red-400':'bg-green-900/30 text-green-400'">{{ (driftResult.confidence*100).toFixed(0) }}% {{ t('supervision.confidence') }}</span></div><div v-if="driftResult.recent_rates" class="text-sm text-gray-400"><div v-for="r in driftResult.recent_rates" :key="r.week" class="flex justify-between py-1"><span>{{ r.week }}</span><span :class="r.rate<0.5?'text-red-400':'text-green-400'">{{ (r.rate*100).toFixed(0) }}%</span></div></div></div><div v-else class="text-gray-500 text-sm py-4">{{ t('supervision.insufficient_data') }}</div></div>
+                    <div class="bg-gray-800 rounded-xl p-6 border border-gray-700"><h3 class="text-md font-semibold mb-4"><i class="fas fa-bell mr-2 text-yellow-400"></i>{{ t('supervision.recent_alerts') }}</h3><div class="space-y-2 max-h-60 overflow-y-auto"><div v-for="(a,i) in alerts" :key="i" class="flex items-start space-x-2 p-2 rounded bg-gray-700/30 alert-" :class="'alert-'+a.level"><i :class="alertIcon(a.level)"></i><div class="flex-1 text-sm">{{ a.message }}</div><div class="text-xs text-gray-500">{{ a.timestamp?.slice(0,16) }}</div></div><div v-if="!alerts.length" class="text-center text-gray-500 py-4">{{ t('supervision.no_alerts') }}</div></div></div>
+                </div>
+            </div>
+        </main>
+
+        <!-- Add MCP Modal -->
+        <div v-if="showAddMCPModal" class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+            <div class="bg-gray-800 rounded-xl p-6 w-full max-w-lg border border-gray-700 max-h-[90vh] overflow-y-auto">
+                <h3 class="text-lg font-semibold mb-4">{{ t('mcp.add_server') }}</h3>
+                <div class="space-y-4">
+                    <div><label class="block text-sm text-gray-400 mb-1">{{ t('mcp.server_name') }}</label><input v-model="newMCP.name" type="text" class="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-blue-500"></div>
+                    <div class="grid grid-cols-2 gap-4"><div><label class="block text-sm text-gray-400 mb-1">{{ t('mcp.transport') }}</label><select v-model="newMCP.transport" class="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-blue-500"><option value="stdio">STDIO</option><option value="sse">SSE</option><option value="http">HTTP</option></select></div><div><label class="block text-sm text-gray-400 mb-1">{{ t('mcp.timeout') }}</label><input v-model.number="newMCP.timeout" type="number" class="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-blue-500"></div></div>
+                    <div v-if="newMCP.transport==='stdio'"><label class="block text-sm text-gray-400 mb-1">{{ t('mcp.command') }}</label><input v-model="newMCP.command" type="text" class="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-blue-500" placeholder="git"></div>
+                    <div v-if="newMCP.transport!=='stdio'"><label class="block text-sm text-gray-400 mb-1">URL</label><input v-model="newMCP.url" type="text" class="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-blue-500" placeholder="https://mcp-server.example.com"></div>
+                    <div><label class="block text-sm text-gray-400 mb-1">{{ t('mcp.auth') }}</label><select v-model="newMCP.auth_type" class="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-blue-500"><option value="none">{{ t('mcp.auth_none') }}</option><option value="bearer">{{ t('mcp.auth_bearer') }}</option><option value="basic">{{ t('mcp.auth_basic') }}</option><option value="api_key">{{ t('mcp.auth_api_key') }}</option></select></div>
+                    <div v-if="newMCP.auth_type!=='none'"><label class="block text-sm text-gray-400 mb-1">{{ t('mcp.auth_token') }}</label><input v-model="newMCP.auth_token" type="password" class="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-blue-500"></div>
+                    <div><label class="block text-sm text-gray-400 mb-1">{{ t('mcp.description') }}</label><input v-model="newMCP.description" type="text" class="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-blue-500" :placeholder="t('mcp.description_placeholder')"></div>
+                </div>
+                <div class="mt-6 flex justify-end space-x-3"><button @click="showAddMCPModal=false" class="px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg transition-colors">{{ t('common.cancel') }}</button><button @click="addMCP" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors">{{ t('mcp.add_server') }}</button></div>
+            </div>
+        </div>
+
+        <!-- Feedback Modal -->
+        <div v-if="showFeedbackModal" class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+            <div class="bg-gray-800 rounded-xl p-6 w-full max-w-md border border-gray-700"><h3 class="text-lg font-semibold mb-4">{{ t('feedback.title') }}</h3><div class="space-y-4"><div><label class="block text-sm text-gray-400 mb-2">{{ t('feedback.is_accurate') }}</label><div class="flex space-x-3"><button @click="feedback.is_correct=true" :class="['flex-1 py-2 rounded-lg transition-colors',feedback.is_correct===true?'bg-green-600':'bg-gray-700 hover:bg-gray-600']"><i class="fas fa-check mr-2"></i>{{ t('feedback.accurate') }}</button><button @click="feedback.is_correct=false" :class="['flex-1 py-2 rounded-lg transition-colors',feedback.is_correct===false?'bg-red-600':'bg-gray-700 hover:bg-gray-600']"><i class="fas fa-times mr-2"></i>{{ t('feedback.inaccurate') }}</button></div></div><div><label class="block text-sm text-gray-400 mb-1">{{ t('feedback.feedback_content') }}</label><textarea v-model="feedback.comment" rows="3" class="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-blue-500"></textarea></div></div><div class="mt-6 flex justify-end space-x-3"><button @click="showFeedbackModal=false" class="px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg transition-colors">{{ t('common.cancel') }}</button><button @click="submitFeedback" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors">{{ t('feedback.submit') }}</button></div></div>
+        </div>
+    </div>
+
+    <script>
+    const {createApp, ref, onMounted, computed, watch, nextTick} = Vue;
+    createApp({
+        setup() {
+            // ============ i18n ============
+            const currentLocale = ref('zh');
+            let i18nMessages = {};
+            const loadLocale = async (locale) => {
+                try { const r = await fetch(`/i18n/${locale}.json`); i18nMessages = await r.json(); } catch(e) { console.error(e); }
+            };
+            const t = (key, ...args) => {
+                const parts = key.split('.'); let result = i18nMessages;
+                for (const part of parts) { if (result && typeof result === 'object' && part in result) result = result[part]; else return key; }
+                if (typeof result === 'string') { let str = result; args.forEach((arg, i) => { str = str.replace(new RegExp(`\\{${i}\\}`, 'g'), arg); }); return str; } return key;
+            };
+            const setLocale = async (e) => { currentLocale.value = e.target.value; await loadLocale(e.target.value); };
+
+            // ============ State ============
+            const currentTab = ref('analyze');
+            const showAlerts = ref(false);
+            const isAnalyzing = ref(false);
+            const analysisMode = ref('change');
+            const changeDescription = ref('');
+            const changeTargetFile = ref('');
+            const codeContext = ref('');
+            const tableName = ref('');
+            const fieldName = ref('');
+            const fieldChange = ref('');
+            const techStack = ref('');
+            const analysisDepth = ref('medium');
+            const projectName = ref('');
+            const audience = ref('developers');
+            const analysisSteps = ref([]);
+            const analysisResult = ref(null);
+            const agents = ref([]);
+            const skills = ref([]);
+            const mcpServers = ref([]);
+            const routingStats = ref({});
+            const learningStats = ref({});
+            const recommendations = ref([]);
+            const ruleAdjustments = ref([]);
+            const showAddMCPModal = ref(false);
+            const showFeedbackModal = ref(false);
+            const newMCP = ref({ name: '', command: '', transport: 'stdio', timeout: 30, auth_type: 'none', auth_token: '', url: '', description: '' });
+            const feedback = ref({ is_correct: null, comment: '' });
+            const marketplaceSkills = [{id:'marketplace.semgrep-rules',name:'Semgrep Rules',description:'50+ security rules',author:'community'},{id:'marketplace.puppet-best',name:'Puppet Best Practices',description:'Puppet code quality',author:'community'}];
+
+            // 历史
+            const historyList = ref([]);
+            const historyTotal = ref(0);
+            const historyOffset = ref(0);
+            const historyFilter = ref({ keyword: '', risk_level: '' });
+
+            // 记忆
+            const memories = ref([]);
+            const memoryStats = ref({});
+            const memorySearch = ref('');
+            const memoryFilterType = ref('');
+            const newMemory = ref({ content: '', memory_type: 'short_term', importance: 0.5 });
+            const newMemoryTags = ref('');
+
+            // 上下文
+            const sessions = ref([]);
+            const selectedSession = ref('');
+            const sessionMessages = ref([]);
+            const newMessage = ref('');
+
+            // 自监督
+            const supervisionMetrics = ref(null);
+            const driftResult = ref(null);
+            const alerts = ref([]);
+            let accuracyChart = null, dailyChart = null;
+
+            const tabs = [
+                { id:'analyze', label:'navigation.analysis', icon:'fas fa-search' },
+                { id:'history', label:'navigation.history', icon:'fas fa-history' },
+                { id:'memory', label:'navigation.memory', icon:'fas fa-brain' },
+                { id:'context', label:'navigation.context', icon:'fas fa-comments' },
+                { id:'agents', label:'navigation.agents', icon:'fas fa-robot' },
+                { id:'skills', label:'navigation.skills', icon:'fas fa-puzzle-piece' },
+                { id:'mcp', label:'navigation.mcp', icon:'fas fa-plug' },
+                { id:'learning', label:'navigation.learning', icon:'fas fa-chart-line' },
+                { id:'supervision', label:'navigation.supervision', icon:'fas fa-shield-alt' },
+            ];
+
+            const canAnalyze = computed(() => {
+                if (analysisMode.value === 'dbfield') return changeDescription.value.trim() && tableName.value.trim() && fieldName.value.trim() && fieldChange.value.trim();
+                return changeDescription.value.trim();
+            });
+
+            const renderedReport = computed(() => {
+                if (!analysisResult.value?.report) return '';
+                return analysisResult.value.report.replace(/^### (.*$)/gm,'<h3>$1</h3>').replace(/^## (.*$)/gm,'<h2>$1</h2>').replace(/^# (.*$)/gm,'<h1>$1</h1>').replace(/\*\*(.*?)\*\*/g,'<strong>$1</strong>').replace(/\*(.*?)\*/g,'<em>$1</em>').replace(/`([^`]+)`/g,'<code>$1</code>').replace(/^- (.*$)/gm,'<li>$1</li>').replace(/(\d+)\. (.*$)/gm,'<li>$2</li>').replace(/\n/g,'<br>');
+            });
+
+            const filteredMemories = computed(() => {
+                let list = memories.value;
+                if (memorySearch.value) { const kw = memorySearch.value.toLowerCase(); list = list.filter(m => m.content.toLowerCase().includes(kw) || (m.tags||[]).some(t => t.toLowerCase().includes(kw))); }
+                if (memoryFilterType.value) list = list.filter(m => m.memory_type === memoryFilterType.value);
+                return list;
+            });
+
+            const alertCount = computed(() => alerts.value.filter(a => a.level === 'critical' || a.level === 'warning').length);
+
+            // ============ API ============
+            const apiCall = async (endpoint, options = {}) => {
+                const r = await fetch(`/api${endpoint}`, { headers: {'Content-Type':'application/json'}, ...options });
+                return r.json();
+            };
+
+            // ============ 加载数据 ============
+            onMounted(async () => {
+                await loadLocale(currentLocale.value);
+                await Promise.all([loadAgents(), loadSkills(), loadMCPServers(), loadLearningInsights(), loadMemory(), loadSessions(), loadSupervision()]);
+            });
+
+            const loadAgents = async () => { const d = await apiCall('/agents'); agents.value = d; };
+            const loadSkills = async () => { const d = await apiCall('/skills'); skills.value = d; };
+            const loadMCPServers = async () => { const d = await apiCall('/mcp/servers'); mcpServers.value = d; };
+            const loadLearningInsights = async () => {
+                const d = await apiCall('/learning/insights');
+                learningStats.value = d.stats || {}; recommendations.value = d.recommendations || []; ruleAdjustments.value = d.adjustments || [];
+            };
+            const loadMemory = async () => {
+                const [mems, stats] = await Promise.all([apiCall('/memory'), apiCall('/memory/stats')]);
+                memories.value = mems || []; memoryStats.value = stats || {};
+            };
+            const loadSessions = async () => { const d = await apiCall('/context/sessions'); sessions.value = d || []; };
+            const loadSupervision = async () => {
+                const [metrics, drift, alrts] = await Promise.all([apiCall('/supervision/metrics'), apiCall('/supervision/drift'), apiCall('/supervision/alerts')]);
+                supervisionMetrics.value = metrics; driftResult.value = drift; alerts.value = alrts.alerts || [];
+                renderCharts(metrics);
+            };
+            const loadHistory = async () => {
+                const d = await apiCall('/history?' + new URLSearchParams({ keyword: historyFilter.value.keyword, risk_level: historyFilter.value.risk_level||'', limit: 50, offset: historyOffset.value }).toString());
+                historyList.value = d.cases || []; historyTotal.value = d.total || 0;
+            };
+            const exportHistory = async () => {
+                const d = await apiCall('/history/export');
+                const blob = new Blob([JSON.stringify(d, null, 2)], { type: 'application/json' });
+                const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `analysis-history-${Date.now()}.json`; a.click();
+            };
+
+            // ============ 分析 ============
+            const startAnalysis = async () => {
+                if (!canAnalyze.value) return;
+                isAnalyzing.value = true; analysisResult.value = null;
+                analysisSteps.value = [
+                    { key:'parse', label: t('analysis.step_parse'), status:'running', statusLabel: t('status.in_progress') },
+                    { key:'chain', label: t('analysis.step_chain'), status:'pending', statusLabel: t('status.pending') },
+                    { key:'report', label: t('analysis.step_report'), status:'pending', statusLabel: t('status.pending') },
+                ];
+                try {
+                    let result;
+                    if (analysisMode.value === 'dbfield') {
+                        result = await apiCall('/impact/db-field', { method:'POST', body: JSON.stringify({ change_description:changeDescription.value, table_name:tableName.value, field_name:fieldName.value, field_change:fieldChange.value, tech_stack:techStack.value, analysis_depth:analysisDepth.value, project_name:projectName.value, audience:audience.value }) });
+                    } else {
+                        result = await apiCall('/impact/chain', { method:'POST', body: JSON.stringify({ change_description:changeDescription.value, file_path:changeTargetFile.value, code_context:codeContext.value, analysis_depth:analysisDepth.value, project_name:projectName.value, audience:audience.value }) });
+                    }
+                    if (result.success) { analysisResult.value = result; analysisSteps.value.forEach(s => { s.status='completed'; s.statusLabel=t('status.completed'); }); }
+                    else { alert(t('analysis.error')+': '+(result.error||'Unknown')); }
+                } catch(e) { alert(t('analysis.error')+': '+e.message); }
+                finally { isAnalyzing.value = false; }
+            };
+            const resetAnalysis = () => { changeDescription.value=''; changeTargetFile.value=''; codeContext.value=''; tableName.value=''; fieldName.value=''; fieldChange.value=''; techStack.value=''; projectName.value=''; audience.value='developers'; analysisDepth.value='medium'; analysisResult.value=null; analysisSteps.value=[]; };
+            const exportReport = () => { const r = analysisResult.value?.report||''; const blob = new Blob([r], {type:'text/markdown'}); const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `impact-report-${Date.now()}.md`; a.click(); URL.revokeObjectURL(a.href); };
+
+            // ============ 记忆操作 ============
+            const addMemory = async () => {
+                if (!newMemory.value.content.trim()) return;
+                const tags = newMemoryTags.value ? newMemoryTags.value.split(',').map(s=>s.trim()).filter(Boolean) : [];
+                await apiCall('/memory', { method:'POST', body: JSON.stringify({ ...newMemory.value, tags }) });
+                newMemory.value = { content:'', memory_type:'short_term', importance:0.5 }; newMemoryTags.value='';
+                await loadMemory();
+            };
+            const deleteMemory = async (id) => { await apiCall(`/memory/${id}`, {method:'DELETE'}); await loadMemory(); };
+            const consolidateMemory = async () => { const d = await apiCall('/memory/consolidate', {method:'POST'}); await loadMemory(); alert(`巩固完成: ${d.consolidated} 条记忆已合并`); };
+
+            // ============ 上下文操作 ============
+            const selectSession = async (s) => { selectedSession.value = s.session_id; const d = await apiCall(`/context/sessions/${s.session_id}/history?limit=100`); sessionMessages.value = d || []; };
+            const createSession = async () => { const d = await apiCall('/context/sessions', {method:'POST'}); sessions.value.unshift(d); selectedSession.value = d.session_id; sessionMessages.value = []; };
+            const deleteSession = async (id) => { await apiCall(`/context/sessions/${id}`, {method:'DELETE'}); sessions.value = sessions.value.filter(s=>s.session_id!==id); if (selectedSession.value===id) { selectedSession.value=''; sessionMessages.value=[]; } };
+            const sendMessage = async (role) => {
+                if (!newMessage.value.trim() || !selectedSession.value) return;
+                await apiCall(`/context/sessions/${selectedSession.value}/messages`, {method:'POST', body: JSON.stringify({ role, content: newMessage.value })});
+                const msg = { message_id: Date.now().toString(), role, content: newMessage.value, timestamp: new Date().toISOString() };
+                sessionMessages.value.push(msg); newMessage.value = '';
+                await loadSessions();
+            };
+
+            // ============ Agent/MCP/Skill ============
+            const toggleAgent = async (id) => { /* TODO */ };
+            const addMCP = async () => {
+                const args = newMCP.value.command ? [] : [];
+                await apiCall('/mcp/servers', { method:'POST', body: JSON.stringify({ name:newMCP.value.name, command:newMCP.value.command, args, transport:newMCP.value.transport, url:newMCP.value.url, timeout:newMCP.value.timeout, auth_type:newMCP.value.auth_type, auth_token:newMCP.value.auth_token, description:newMCP.value.description }) });
+                showAddMCPModal.value = false; await loadMCPServers();
+            };
+            const removeMCP = async (name) => { await apiCall(`/mcp/servers/${name}`, {method:'DELETE'}); await loadMCPServer(); };
+            const installSkill = async (id) => { alert(`${t('skill.install_skill')}: ${id}`); };
+            const applyAdjustment = async (ruleId, adj) => { await apiCall(`/learning/rules/${ruleId}/adjust`, {method:'POST', body: JSON.stringify(adj)}); await loadLearningInsights(); };
+            const openFeedbackModal = () => { showFeedbackModal.value = true; feedback.value = { is_correct: null, comment: '' }; };
+            const submitFeedback = async () => { if (feedback.value.is_correct===null) return; await apiCall('/cases/temp/feedback', {method:'POST', body: JSON.stringify(feedback.value)}); showFeedbackModal.value=false; await loadLearningInsights(); };
+            const viewHistoryDetail = async (h) => { alert(`Case ID: ${h.case_id}\nTarget: ${h.target_file}\nRisk: ${h.risk_level}\nFindings: ${h.findings_count}\nTime: ${h.timestamp}`); };
+            const deleteHistory = async (id) => { if (!confirm('确定删除？')) return; await apiCall(`/history/${id}`, {method:'DELETE'}); await loadHistory(); };
+
+            // ============ 图表 ============
+            const renderCharts = (metrics) => {
+                nextTick(() => {
+                    const accCtx = document.getElementById('accuracyChart');
+                    const dailyCtx = document.getElementById('dailyChart');
+                    if (accuracyChart) accuracyChart.destroy();
+                    if (dailyChart) dailyChart.destroy();
+                    if (accCtx) {
+                        const trends = metrics?.trends?.weekly_accuracy || [];
+                        accuracyChart = new Chart(accCtx, { type:'line', data:{ labels:trends.map(t=>t.week), datasets:[{ label:t('supervision.accuracy'), data:trends.map(t=>t.rate*100), borderColor:'#3b82f6', backgroundColor:'rgba(59,130,246,0.1)', fill:true, tension:0.4 }]}, options:{ responsive:true, plugins:{ legend:{ labels:{ color:'#9ca3af' } } }, scales:{ x:{ ticks:{ color:'#6b7280' }, grid:{ color:'#374151' } }, y:{ ticks:{ color:'#6b7280' }, grid:{ color:'#374151' }, min:0, max:100 } } } });
+                    }
+                    if (dailyCtx) {
+                        const trends = metrics?.trends?.daily_cases || [];
+                        dailyChart = new Chart(dailyCtx, { type:'bar', data:{ labels:trends.map(t=>t.date), datasets:[{ label:t('supervision.daily_cases'), data:trends.map(t=>t.count), backgroundColor:'rgba(139,92,246,0.7)', borderRadius:4 }]}, options:{ responsive:true, plugins:{ legend:{ labels:{ color:'#9ca3af' } } }, scales:{ x:{ ticks:{ color:'#6b7280' }, grid:{ color:'#374151' } }, y:{ ticks:{ color:'#6b7280' }, grid:{ color:'#374151' }, beginAtZero:true, integerOnly:true } } } });
+                    }
+                });
+            };
+
+            // ============ 工具函数 ============
+            const stepIcon = (s) => ({completed:'fas fa-check-circle text-green-400',running:'fas fa-spinner fa-spin text-blue-400',pending:'fas fa-circle text-gray-500'}[s.status]||'fas fa-circle text-gray-500');
+            const stepColor = (s) => ({completed:'text-green-400',running:'text-blue-400',pending:'text-gray-500'}[s.status]||'text-gray-500');
+            const stepTextColor = (s) => stepColor(s);
+            const getRiskBadgeClass = (r) => ({low:'bg-green-900/30 text-green-400',medium:'bg-yellow-900/30 text-yellow-400',high:'bg-orange-900/30 text-orange-400',critical:'bg-red-900/30 text-red-400'}[r]||'bg-gray-700 text-gray-300');
+            const getSeverityClass = (s) => ({high:'bg-red-900/30 text-red-400',medium:'bg-yellow-900/30 text-yellow-400',low:'bg-green-900/30 text-green-400'}[s]||'bg-gray-600 text-gray-300');
+            const getAgentStatusClass = (s) => ({idle:'bg-green-900/30',busy:'bg-yellow-900/30',offline:'bg-gray-600'}[s]||'bg-gray-600');
+            const getStatusBadgeClass = (s) => ({idle:'bg-green-900/30 text-green-400',busy:'bg-yellow-900/30 text-yellow-400',offline:'bg-gray-600 text-gray-400'}[s]||'bg-gray-600');
+            const getAgentIcon = () => 'fas fa-robot';
+            const alertIcon = (level) => ({critical:'fas fa-exclamation-circle text-red-400',warning:'fas fa-exclamation-triangle text-yellow-400',info:'fas fa-info-circle text-blue-400'}[level]||'fas fa-bell text-gray-400');
+            const memTypeColor = (t) => ({short_term:'bg-blue-900/50',long_term:'bg-green-900/50',episodic:'bg-yellow-900/50',semantic:'bg-purple-900/50'}[t]||'bg-gray-700');
+            const memTypeIcon = (t) => ({short_term:'fas fa-bolt',long_term:'fas fa-database',episodic:'fas fa-clock',semantic:'fas fa-book'}[t]||'fas fa-memory');
+            const memTypeBgClass = (t) => ({short_term:'bg-blue-900/30 text-blue-400',long_term:'bg-green-900/30 text-green-400',episodic:'bg-yellow-900/30 text-yellow-400',semantic:'bg-purple-900/30 text-purple-400'}[t]||'bg-gray-600 text-gray-300');
+
+            // 监听tab切换，自动加载对应数据
+            watch(currentTab, (tab) => {
+                if (tab === 'history') loadHistory();
+                if (tab === 'memory') loadMemory();
+                if (tab === 'context') loadSessions();
+                if (tab === 'supervision') loadSupervision();
+                if (tab === 'learning') loadLearningInsights();
+            });
+
+            return {
+                currentLocale, t, setLocale,
+                currentTab, tabs, showAlerts, alertCount,
+                isAnalyzing, analysisMode, changeDescription, changeTargetFile, codeContext,
+                tableName, fieldName, fieldChange, techStack,
+                analysisDepth, projectName, audience, canAnalyze,
+                analysisSteps, analysisResult, renderedReport,
+                agents, skills, mcpServers, routingStats,
+                learningStats, recommendations, ruleAdjustments,
+                showAddMCPModal, showFeedbackModal, newMCP, feedback,
+                marketplaceSkills,
+                // 历史
+                historyList, historyTotal, historyOffset, historyFilter,
+                // 记忆
+                memories, memoryStats, memorySearch, memoryFilterType, filteredMemories,
+                newMemory, newMemoryTags,
+                // 上下文
+                sessions, selectedSession, sessionMessages, newMessage,
+                // 自监督
+                supervisionMetrics, driftResult, alerts,
+                startAnalysis, resetAnalysis, exportReport,
+                loadHistory, exportHistory,
+                addMemory, deleteMemory, consolidateMemory,
+                selectSession, createSession, deleteSession, sendMessage,
+                toggleAgent, loadAgents, loadSkills, loadMCPServers, addMCP, removeMCP,
+                installSkill, applyAdjustment, openFeedbackModal, submitFeedback,
+                viewHistoryDetail, deleteHistory,
+                stepIcon, stepColor, stepTextColor, getRiskBadgeClass, getSeverityClass,
+                getAgentStatusClass, getStatusBadgeClass, getAgentIcon,
+                alertIcon, memTypeColor, memTypeIcon, memTypeBgClass,
+            };
+        }
+    }).mount('#app');
+    </script>
+</body>
+</html>

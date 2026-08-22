@@ -1,0 +1,43 @@
+{
+  "name": "code-impact-agent-v2",
+  "version": "2.0.0",
+  "description": "代码影响范围调查 - 增强版多Agent协作系统",
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently \"npm run dev:server\" \"npm run dev:web\"",
+    "dev:server": "node src/server.js",
+    "dev:web": "vite --port 5173",
+    "build": "vite build",
+    "start": "node src/server.js",
+    "test": "vitest",
+    "mcp:add": "node scripts/mcp-add.js"
+  },
+  "dependencies": {
+    "@langchain/core": "^0.3.0",
+    "@langchain/langgraph": "^0.2.0",
+    "express": "^4.18.2",
+    "ws": "^8.16.0",
+    "socket.io": "^4.7.4",
+    "cpx": "^2.0.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "gitdiff-parser": "^1.0.0",
+    "graphlib": "^2.1.8",
+    "lowdb": "^7.0.1",
+    "uuid": "^9.0.1",
+    "zod": "^3.22.4"
+  },
+  "devDependencies": {
+    "typescript": "^5.3.3",
+    "vitest": "^1.2.0",
+    "concurrently": "^8.2.2",
+    "vite": "^5.1.0",
+    "@types/express": "^4.17.21",
+    "@types/node": "^20.11.0",
+    "@types/ws": "^8.5.10",
+    "@types/cors": "^2.8.17",
+    "tailwindcss": "^3.4.0",
+    "postcss": "^8.4.35",
+    "autoprefixer": "^10.4.17"
+  }
+}

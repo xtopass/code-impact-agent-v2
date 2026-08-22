@@ -1,0 +1,589 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Code Impact Agent - 初始化配置</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        .fade-enter-active, .fade-leave-active { transition: opacity 0.3s ease; }
+        .fade-enter-from, .fade-leave-to { opacity: 0; }
+        .slide-enter-active, .slide-leave-active { transition: all 0.3s ease; }
+        .slide-enter-from { transform: translateX(20px); opacity: 0; }
+        .slide-leave-to { transform: translateX(-20px); opacity: 0; }
+        
+        /* 自定义进度条 */
+        .progress-fill {
+            transition: width 0.5s ease;
+        }
+        
+        /* 玻璃态效果 */
+        .glass {
+            background: rgba(31, 41, 55, 0.7);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(75, 85, 99, 0.4);
+        }
+        
+        /* 输入框焦点效果 */
+        .input-glow:focus {
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.3);
+        }
+        
+        /* 步骤卡片悬停 */
+        .step-card {
+            transition: all 0.3s ease;
+        }
+        .step-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+        }
+        .step-card.active {
+            border-color: #3b82f6;
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2);
+        }
+        .step-card.completed {
+            border-color: #10b981;
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-gray-100 min-h-screen">
+    <div id="app">
+        <!-- 背景装饰 -->
+        <div class="fixed inset-0 overflow-hidden pointer-events-none">
+            <div class="absolute top-0 left-1/4 w-96 h-96 bg-blue-500/10 rounded-full blur-3xl"></div>
+            <div class="absolute bottom-0 right-1/4 w-96 h-96 bg-purple-500/10 rounded-full blur-3xl"></div>
+        </div>
+
+        <!-- 主容器 -->
+        <div class="relative min-h-screen flex flex-col">
+            <!-- 顶部导航 -->
+            <nav class="glass px-6 py-4">
+                <div class="flex items-center justify-between max-w-4xl mx-auto">
+                    <div class="flex items-center space-x-3">
+                        <div class="w-10 h-10 bg-gradient-to-br from-blue-500 to-purple-600 rounded-lg flex items-center justify-center">
+                            <i class="fas fa-project-diagram text-white"></i>
+                        </div>
+                        <div>
+                            <h1 class="text-xl font-bold text-white">Code Impact Agent</h1>
+                            <p class="text-xs text-gray-400">初始化配置向导</p>
+                        </div>
+                    </div>
+                    
+                    <!-- 语言切换 + 步骤指示器 -->
+                    <div class="flex items-center space-x-4">
+                        <select v-model="currentLocale" @change="setLocale"
+                            class="bg-gray-700 border border-gray-600 rounded-lg px-2 py-1 text-sm text-white focus:outline-none focus:border-blue-500">
+                            <option value="zh">中文</option>
+                            <option value="en">English</option>
+                            <option value="ja">日本語</option>
+                        </select>
+                        <div class="flex items-center space-x-2">
+                            <div v-for="(step, idx) in steps" :key="idx"
+                                 class="flex items-center">
+                                <div class="flex flex-col items-center">
+                                    <div class="w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium transition-all"
+                                         :class="getStepClass(idx)">
+                                        <i v-if="getStepIcon(idx)" :class="getStepIcon(idx)"></i>
+                                        <span v-else>{{ idx + 1 }}</span>
+                                    </div>
+                                    <span class="text-xs mt-1 text-gray-500 hidden sm:block">{{ t(step.i18nKey) }}</span>
+                                </div>
+                                <div v-if="idx < steps.length - 1"
+                                     class="w-8 h-0.5 mx-1 transition-all"
+                                     :class="idx < currentStep ? 'bg-blue-500' : 'bg-gray-700'"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </nav>
+
+            <!-- 进度条 -->
+            <div class="w-full bg-gray-800 h-1">
+                <div class="progress-fill bg-gradient-to-r from-blue-500 to-purple-500 h-1"
+                     :style="{ width: ((currentStep + 1) / steps.length * 100) + '%' }"></div>
+            </div>
+
+            <!-- 内容区域 -->
+            <main class="flex-1 flex items-center justify-center p-6">
+                <div class="w-full max-w-2xl">
+                    <!-- 步骤内容 -->
+                    <transition name="slide" mode="out-in">
+                        <div :key="currentStep" class="glass rounded-2xl p-8">
+                            
+                            <!-- 步骤0: 欢迎 -->
+                            <div v-if="currentStep === 0" class="text-center">
+                                <div class="w-20 h-20 bg-gradient-to-br from-blue-500 to-purple-600 rounded-2xl flex items-center justify-center mx-auto mb-6">
+                                    <i class="fas fa-rocket text-4xl text-white"></i>
+                                </div>
+                                <h2 class="text-3xl font-bold mb-4">欢迎使用 Code Impact Agent</h2>
+                                <p class="text-gray-400 mb-8 text-lg">
+                                    代码影响范围调查系统<br>
+                                    <span class="text-sm">支持 MCP 扩展 · Skill 插件 · LLM 增强 · 自学习</span>
+                                </p>
+                                
+                                <div class="grid grid-cols-2 gap-4 mb-8 text-left">
+                                    <div class="bg-gray-800/50 rounded-lg p-4">
+                                        <i class="fas fa-robot text-blue-400 mb-2"></i>
+                                        <div class="font-medium">多Agent协作</div>
+                                        <div class="text-sm text-gray-500">专业领域专家分工</div>
+                                    </div>
+                                    <div class="bg-gray-800/50 rounded-lg p-4">
+                                        <i class="fas fa-plug text-green-400 mb-2"></i>
+                                        <div class="font-medium">MCP集成</div>
+                                        <div class="text-sm text-gray-500">扩展工具能力</div>
+                                    </div>
+                                    <div class="bg-gray-800/50 rounded-lg p-4">
+                                        <i class="fas fa-puzzle-piece text-yellow-400 mb-2"></i>
+                                        <div class="font-medium">Skill系统</div>
+                                        <div class="text-sm text-gray-500">可插拔技能模块</div>
+                                    </div>
+                                    <div class="bg-gray-800/50 rounded-lg p-4">
+                                        <i class="fas fa-brain text-purple-400 mb-2"></i>
+                                        <div class="font-medium">自学习</div>
+                                        <div class="text-sm text-gray-500">持续优化改进</div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- 步骤1: GitHub配置 -->
+                            <div v-if="currentStep === 1">
+                                <div class="flex items-center space-x-3 mb-6">
+                                    <div class="w-12 h-12 bg-gray-800 rounded-xl flex items-center justify-center">
+                                        <i class="fab fa-github text-2xl"></i>
+                                    </div>
+                                    <div>
+                                        <h2 class="text-xl font-bold">GitHub 配置</h2>
+                                        <p class="text-sm text-gray-400">用于推送代码和访问仓库</p>
+                                    </div>
+                                </div>
+                                
+                                <div class="space-y-4">
+                                    <div>
+                                        <label class="block text-sm font-medium text-gray-300 mb-2">
+                                            GitHub Token <span class="text-red-400">*</span>
+                                        </label>
+                                        <div class="relative">
+                                            <input v-model="config.githubToken" type="password" 
+                                                class="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-3 pr-12 text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 input-glow"
+                                                placeholder="ghp_xxxxxxxxxxxxxxxxxxxx">
+                                            <button @click="toggleTokenVisibility" class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-white">
+                                                <i :class="showToken ? 'fas fa-eye-slash' : 'fas fa-eye'"></i>
+                                            </button>
+                                        </div>
+                                        <p class="text-xs text-gray-500 mt-1">
+                                            <i class="fas fa-info-circle mr-1"></i>
+                                            在 GitHub → Settings → Developer settings → Personal access tokens 创建
+                                        </p>
+                                    </div>
+                                    
+                                    <div>
+                                        <label class="block text-sm font-medium text-gray-300 mb-2">
+                                            GitHub 用户名
+                                        </label>
+                                        <input v-model="config.githubUsername" type="text" 
+                                            class="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 input-glow"
+                                            placeholder="your-username">
+                                    </div>
+                                    
+                                    <div class="flex items-center space-x-2 pt-2">
+                                        <input v-model="config.skipGitHub" type="checkbox" id="skipGithub" class="w-4 h-4 rounded border-gray-600 text-blue-500 focus:ring-blue-500 bg-gray-700">
+                                        <label for="skipGithub" class="text-sm text-gray-400 cursor-pointer">
+                                            跳过此步骤（可在设置中配置）
+                                        </label>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- 步骤2: LLM配置 -->
+                            <div v-if="currentStep === 2">
+                                <div class="flex items-center space-x-3 mb-6">
+                                    <div class="w-12 h-12 bg-gradient-to-br from-purple-500 to-pink-500 rounded-xl flex items-center justify-center">
+                                        <i class="fas fa-brain text-2xl"></i>
+                                    </div>
+                                    <div>
+                                        <h2 class="text-xl font-bold">LLM 配置 <span class="text-xs bg-yellow-500/20 text-yellow-400 px-2 py-0.5 rounded">可选</span></h2>
+                                        <p class="text-sm text-gray-400">AI Agent的核心能力 - 语义理解与智能推理</p>
+                                    </div>
+                                </div>
+                                
+                                <div class="bg-yellow-900/20 border border-yellow-700 rounded-lg p-4 mb-6">
+                                    <div class="flex items-start space-x-2">
+                                        <i class="fas fa-info-circle text-yellow-400 mt-0.5"></i>
+                                        <div class="text-sm text-yellow-200">
+                                            <strong>LLM 用于增强分析质量</strong>，不配置仍可启动系统，但将无法：
+                                            <ul class="list-disc ml-4 mt-1 space-y-1">
+                                                <li>进行语义级代码变更理解</li>
+                                                <li>智能风险评估和推理</li>
+                                                <li>生成自然语言分析报告</li>
+                                                <li>从反馈中持续学习优化</li>
+                                            </ul>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <div class="space-y-4">
+                                    <div>
+                                        <label class="block text-sm font-medium text-gray-300 mb-2">选择提供商</label>
+                                        <div class="grid grid-cols-2 gap-3">
+                                            <button v-for="provider in llmProviders" :key="provider.id"
+                                                @click="config.llmProvider = provider.id"
+                                                class="p-4 rounded-lg border-2 transition-all text-left"
+                                                :class="config.llmProvider === provider.id ? 'border-blue-500 bg-blue-500/10' : 'border-gray-700 bg-gray-800/50 hover:border-gray-600'">
+                                                <div class="flex items-center space-x-2">
+                                                    <i :class="provider.icon + ' text-xl'"></i>
+                                                    <span class="font-medium">{{ provider.name }}</span>
+                                                </div>
+                                                <div class="text-xs text-gray-500 mt-1">{{ provider.description }}</div>
+                                            </button>
+                                            <!-- 自定义 OpenAI 兼容 -->
+                                            <button @click="config.llmProvider = 'custom'"
+                                                class="p-4 rounded-lg border-2 transition-all text-left"
+                                                :class="config.llmProvider === 'custom' ? 'border-blue-500 bg-blue-500/10' : 'border-gray-700 bg-gray-800/50 hover:border-gray-600'">
+                                                <div class="flex items-center space-x-2">
+                                                    <i class="fas fa-puzzle-piece text-xl text-gray-400"></i>
+                                                    <span class="font-medium text-gray-300">自定义</span>
+                                                </div>
+                                                <div class="text-xs text-gray-500 mt-1">OpenAI 兼容格式 API</div>
+                                            </button>
+                                        </div>
+                                    </div>
+                                    
+                                    <div v-if="config.llmProvider">
+                                        <label class="block text-sm font-medium text-gray-300 mb-2">
+                                            API Key <span class="text-red-400">*</span>
+                                        </label>
+                                        <div class="relative">
+                                            <input v-model="config.llmApiKey" type="password" 
+                                                class="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-3 pr-12 text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 input-glow"
+                                                :placeholder="getApiKeyPlaceholder()">
+                                            <button @click="toggleLLMKeyVisibility" class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-white">
+                                                <i :class="showLLMKey ? 'fas fa-eye-slash' : 'fas fa-eye'"></i>
+                                            </button>
+                                        </div>
+                                        <p class="text-xs text-gray-500 mt-1">
+                                            <i class="fas fa-info-circle mr-1"></i>
+                                            {{ getProviderHelpText() }}
+                                        </p>
+                                    </div>
+                                    
+                                    <div v-if="config.llmProvider === 'deepseek' || config.llmProvider === 'openai' || config.llmProvider === 'zhipu'">
+                                        <label class="block text-sm font-medium text-gray-300 mb-2">模型</label>
+                                        <select v-model="config.llmModel" class="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-blue-500">
+                                            <option v-if="config.llmProvider === 'deepseek'" value="deepseek-chat">deepseek-chat (推荐)</option>
+                                            <option v-if="config.llmProvider === 'deepseek'" value="deepseek-coder">deepseek-coder (代码专用)</option>
+                                            <option v-if="config.llmProvider === 'openai'" value="gpt-4o">gpt-4o</option>
+                                            <option v-if="config.llmProvider === 'openai'" value="gpt-4o-mini">gpt-4o-mini</option>
+                                            <option v-if="config.llmProvider === 'zhipu'" value="glm-4">glm-4</option>
+                                            <option v-if="config.llmProvider === 'zhipu'" value="glm-4-plus">glm-4-plus</option>
+                                        </select>
+                                    </div>
+                                    <div v-if="config.llmProvider === 'custom'">
+                                        <label class="block text-sm font-medium text-gray-300 mb-2">API Base URL</label>
+                                        <input v-model="config.llmBaseUrl" type="text"
+                                            class="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:border-blue-500"
+                                            placeholder="https://api.openai.com/v1 或 https://your-api.com/v1">
+                                        <p class="text-xs text-gray-500 mt-1"><i class="fas fa-info-circle mr-1"></i>必须为 OpenAI 兼容格式的 API 端点</p>
+                                    </div>
+                                    <div v-if="config.llmProvider === 'custom'">
+                                        <label class="block text-sm font-medium text-gray-300 mb-2">模型名称</label>
+                                        <input v-model="config.llmModel" type="text"
+                                            class="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:border-blue-500"
+                                            placeholder="gpt-4o 或 your-model-name">
+                                    </div>
+                                    
+                                    <div class="flex items-center space-x-2 pt-2">
+                                        <input v-model="config.skipLLM" type="checkbox" id="skipLLM" class="w-4 h-4 rounded border-gray-600 text-blue-500 focus:ring-blue-500 bg-gray-700">
+                                        <label for="skipLLM" class="text-sm text-gray-400 cursor-pointer">
+                                            跳过此步骤（可在设置中稍后配置）
+                                        </label>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- 步骤3: 服务端口配置 -->
+                            <div v-if="currentStep === 3">
+                                <div class="flex items-center space-x-3 mb-6">
+                                    <div class="w-12 h-12 bg-gray-800 rounded-xl flex items-center justify-center">
+                                        <i class="fas fa-server text-2xl text-green-400"></i>
+                                    </div>
+                                    <div>
+                                        <h2 class="text-xl font-bold">服务配置</h2>
+                                        <p class="text-sm text-gray-400">设置服务器运行参数</p>
+                                    </div>
+                                </div>
+                                
+                                <div class="space-y-4">
+                                    <div>
+                                        <label class="block text-sm font-medium text-gray-300 mb-2">API 端口</label>
+                                        <input v-model="config.apiPort" type="number" 
+                                            class="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-blue-500 input-glow"
+                                            placeholder="3000">
+                                    </div>
+                                    
+                                    <div>
+                                        <label class="block text-sm font-medium text-gray-300 mb-2">Web 端口</label>
+                                        <input v-model="config.webPort" type="number" 
+                                            class="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-blue-500 input-glow"
+                                            placeholder="5173">
+                                    </div>
+                                    
+                                    <div>
+                                        <label class="block text-sm font-medium text-gray-300 mb-2">数据存储目录</label>
+                                        <input v-model="config.dataDir" type="text" 
+                                            class="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-blue-500 input-glow"
+                                            placeholder="./data">
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- 步骤4: 完成 -->
+                            <div v-if="currentStep === 4" class="text-center">
+                                <div class="w-20 h-20 bg-gradient-to-br from-green-400 to-emerald-600 rounded-2xl flex items-center justify-center mx-auto mb-6">
+                                    <i class="fas fa-check text-4xl text-white"></i>
+                                </div>
+                                <h2 class="text-3xl font-bold mb-4">配置完成！</h2>
+                                <p class="text-gray-400 mb-8 text-lg">
+                                    所有配置已保存，可以开始使用
+                                </p>
+                                
+                                <div class="bg-gray-800/50 rounded-xl p-6 mb-6 text-left">
+                                    <h3 class="font-medium mb-4">配置摘要</h3>
+                                    <div class="space-y-2 text-sm">
+                                        <div class="flex justify-between">
+                                            <span class="text-gray-400">GitHub:</span>
+                                            <span :class="config.githubToken ? 'text-green-400' : 'text-yellow-400'">
+                                                {{ config.githubToken ? '✓ 已配置' : '○ 未配置' }}
+                                            </span>
+                                        </div>
+                                        <div class="flex justify-between">
+                                            <span class="text-gray-400">LLM:</span>
+                                            <span :class="config.llmApiKey ? 'text-green-400' : 'text-yellow-400'">
+                                                {{ config.llmApiKey ? '✓ 已启用 (' + config.llmProvider + ')' : '○ 未启用' }}
+                                            </span>
+                                        </div>
+                                        <div class="flex justify-between">
+                                            <span class="text-gray-400">API 端口:</span>
+                                            <span class="text-white">{{ config.apiPort }}</span>
+                                        </div>
+                                        <div class="flex justify-between">
+                                            <span class="text-gray-400">Web 端口:</span>
+                                            <span class="text-white">{{ config.webPort }}</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </transition>
+
+                    <!-- 底部按钮 -->
+                    <div class="flex justify-between mt-6">
+                        <button v-if="currentStep > 0 && currentStep < 4"
+                            @click="prevStep"
+                            class="px-6 py-2.5 bg-gray-800 hover:bg-gray-700 rounded-lg font-medium transition-colors">
+                            <i class="fas fa-arrow-left mr-2"></i>上一步
+                        </button>
+                        
+                        <div v-if="currentStep === 0" class="flex-1"></div>
+                        
+                        <button v-if="currentStep < 4"
+                            @click="nextStep"
+                            :disabled="!isCurrentStepValid()"
+                            :class="['px-6 py-2.5 rounded-lg font-medium transition-all',
+                                isCurrentStepValid() 
+                                    ? 'bg-blue-600 hover:bg-blue-700 text-white' 
+                                    : 'bg-gray-700 text-gray-500 cursor-not-allowed']">
+                            {{ currentStep === 3 ? '开始使用' : '下一步' }}
+                            <i class="fas fa-arrow-right ml-2"></i>
+                        </button>
+                    </div>
+                </div>
+            </main>
+        </div>
+    </div>
+
+    <script>
+        const { createApp, ref, computed, onMounted } = Vue;
+
+        createApp({
+            setup() {
+                const currentStep = ref(0);
+                const showToken = ref(false);
+                const showLLMKey = ref(false);
+                
+                const config = ref({
+                    githubToken: '',
+                    githubUsername: '',
+                    skipGitHub: false,
+                    llmProvider: 'deepseek',
+                    llmApiKey: '',
+                    llmModel: 'deepseek-chat',
+                    llmBaseUrl: '',    // 自定义 provider 用
+                    skipLLM: false,
+                    apiPort: '3000',
+                    webPort: '5173',
+                    dataDir: './data'
+                });
+                
+                const steps = [
+                    { title: 'setup.step_welcome', icon: 'fas fa-hand-wave', i18nKey: 'setup.step_welcome' },
+                    { title: 'setup.step_github', icon: 'fab fa-github', i18nKey: 'setup.step_github' },
+                    { title: 'setup.step_llm', icon: 'fas fa-brain', i18nKey: 'setup.step_llm' },
+                    { title: 'setup.step_service', icon: 'fas fa-server', i18nKey: 'setup.step_service' },
+                    { title: 'setup.step_complete', icon: 'fas fa-check', i18nKey: 'setup.step_complete' }
+                ];
+                
+                const llmProviders = [
+                    { 
+                        id: 'deepseek', 
+                        name: 'DeepSeek', 
+                        icon: 'fas fa-bolt text-blue-400',
+                        description: '性价比高，¥1.5/百万token',
+                        recommended: true
+                    },
+                    { 
+                        id: 'openai', 
+                        name: 'OpenAI', 
+                        icon: 'fas fa-circle text-green-400',
+                        description: 'GPT-4o，功能强大'
+                    },
+                    { 
+                        id: 'anthropic', 
+                        name: 'Anthropic', 
+                        icon: 'fas fa-comment text-orange-400',
+                        description: 'Claude，推理能力强'
+                    },
+                    { 
+                        id: 'zhipu', 
+                        name: '智谱AI', 
+                        icon: 'fas fa-graduation-cap text-purple-400',
+                        description: 'GLM-4，国产优秀'
+                    }
+                ];
+                
+                const getStepClass = (idx) => {
+                    if (idx < currentStep.value) return 'bg-green-500 text-white';
+                    if (idx === currentStep.value) return 'bg-blue-500 text-white ring-2 ring-blue-300';
+                    return 'bg-gray-700 text-gray-400';
+                };
+                
+                const getStepIcon = (idx) => {
+                    if (idx < currentStep.value) return 'fas fa-check';
+                    return steps[idx].icon;
+                };
+                
+                const toggleTokenVisibility = () => {
+                    showToken.value = !showToken.value;
+                };
+                
+                const toggleLLMKeyVisibility = () => {
+                    showLLMKey.value = !showLLMKey.value;
+                };
+                
+                const getApiKeyPlaceholder = () => {
+                    const placeholders = {
+                        'deepseek': 'sk-xxxxxxxx',
+                        'openai': 'sk-xxxxxxxx',
+                        'anthropic': 'sk-ant-xxxxxxxx',
+                        'zhipu': 'xxxxxxxx',
+                        'custom': 'sk-xxxxxxxx 或您的 API Key'
+                    };
+                    return placeholders[config.value.llmProvider] || 'API Key';
+                };
+
+                const getProviderHelpText = () => {
+                    const texts = {
+                        'deepseek': '在 https://platform.deepseek.com 获取 API Key',
+                        'openai': '在 https://platform.openai.com/api-keys 获取',
+                        'anthropic': '在 https://console.anthropic.com/settings/keys 获取',
+                        'zhipu': '在 https://open.bigmodel.cn/usercenter/apikeys 获取',
+                        'custom': '使用 OpenAI 兼容格式的任意 API 服务（如 vLLM、LocalAI、 ollama 等）'
+                    };
+                    return texts[config.value.llmProvider] || '';
+                };
+                
+                const isCurrentStepValid = () => {
+                    switch(currentStep.value) {
+                        case 0: return true;
+                        case 1: 
+                            return config.value.skipGitHub || config.value.githubToken.length > 0;
+                        case 2:
+                            // LLM可选：未配置时允许跳过
+                            return config.value.skipLLM || config.value.llmApiKey.length > 0;
+                        case 3: return true;
+                        default: return true;
+                    }
+                };
+                
+                const nextStep = () => {
+                    if (currentStep.value < 4) {
+                        currentStep.value++;
+                    }
+                };
+                
+                const prevStep = () => {
+                    if (currentStep.value > 0) {
+                        currentStep.value--;
+                    }
+                };
+                
+                // ============ i18n ============
+                const currentLocale = ref('zh');
+                let i18nMessages = {};
+
+                const loadLocale = async (locale) => {
+                    try {
+                        const res = await fetch(`/i18n/${locale}.json`);
+                        i18nMessages = await res.json();
+                    } catch (e) { console.error(e); }
+                };
+
+                const t = (key, ...args) => {
+                    const parts = key.split('.');
+                    let result = i18nMessages;
+                    for (const part of parts) {
+                        if (result && typeof result === 'object' && part in result) result = result[part];
+                        else return key;
+                    }
+                    if (typeof result === 'string') {
+                        let str = result;
+                        args.forEach((arg, i) => { str = str.replace(new RegExp(`\\{${i}\\}`, 'g'), arg); });
+                        return str;
+                    }
+                    return key;
+                };
+
+                const setLocale = async (e) => {
+                    currentLocale.value = e.target.value;
+                    await loadLocale(e.target.value);
+                };
+
+                const saveConfig = async () => {
+                    // 这里会调用API保存配置
+                    console.log('保存配置:', config.value);
+                };
+
+                onMounted(async () => {
+                    await loadLocale(currentLocale.value);
+                    checkExistingConfig();
+                });
+
+                const checkExistingConfig = async () => {
+                    // 尝试从本地存储或API加载已有配置
+                };
+
+                return {
+                    currentLocale, t, setLocale,
+                    currentStep, steps, config, llmProviders,
+                    showToken, showLLMKey,
+                    getStepClass, getStepIcon,
+                    toggleTokenVisibility, toggleLLMKeyVisibility,
+                    getApiKeyPlaceholder, getProviderHelpText,
+                    isCurrentStepValid, nextStep, prevStep, saveConfig
+                };
+            }
+        }).mount('#app');
+    </script>
+</body>
+</html>

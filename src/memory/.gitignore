@@ -1,0 +1,7 @@
+# 记忆管理
+src/memory/__pycache__/
+__pycache__/
+
+# 上下文数据
+data/sessions/
+data/conversations/
